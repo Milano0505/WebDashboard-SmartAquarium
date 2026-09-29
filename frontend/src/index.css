@@ -1,0 +1,110 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --color-navy-950: #060d2c;
+  --color-navy-900: #0d1b4b;
+  --color-navy-800: #162060;
+  --color-sidebar: #3b7cf4;
+  --color-sidebar-hover: #2563eb;
+  --color-sidebar-active: #1d4ed8;
+}
+
+* {
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+:root {
+  --scrollbar-width: 6px;
+}
+
+/* ── Global scrollbar — thin, rounded, brand-tinted ── */
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(59, 124, 244, 0.25) transparent;
+}
+
+/* Chrome / Safari / Edge */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(59, 124, 244, 0.25);
+  border-radius: 99px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 124, 244, 0.55);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* .scroll-area: slightly more visible on content panels */
+.scroll-area {
+  overflow-y: auto;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(59, 124, 244, 0.18);
+}
+.scroll-area:hover::-webkit-scrollbar-thumb {
+  background: rgba(59, 124, 244, 0.45);
+}
+
+/* No scrollbar on chrome (header, sidebar, tab bars) */
+header::-webkit-scrollbar,
+aside::-webkit-scrollbar,
+aside *::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
+}
+header,
+aside,
+aside * {
+  scrollbar-width: none !important;
+}
+
+/* Utility: completely hide scrollbar on any element */
+.no-scrollbar::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
+}
+.no-scrollbar {
+  scrollbar-width: none !important;
+}
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #e2e8f0;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b7cf4;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b7cf4;
+  cursor: pointer;
+  border: 2px solid white;
+}

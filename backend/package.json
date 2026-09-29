@@ -1,0 +1,30 @@
+{
+    "name": "backend",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "type": "module",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "bcrypt": "^6.0.0",
+        "cors": "^2.8.6",
+        "dotenv": "^18.0.4",
+        "express": "^5.2.1",
+        "firebase-admin": "^14.5.0",
+        "jsonwebtoken": "^9.0.3"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.14"
+    },
+    "allowScripts": {
+        "@firebase/util@1.15.3": true,
+        "bcrypt@6.0.0": true,
+        "protobufjs@7.6.6": true
+    }
+}
