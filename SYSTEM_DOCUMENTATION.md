@@ -25,71 +25,60 @@ GITHUB_GUIDE.md
 
 ### Frontend
 
-| Modul | Tanggung jawab |
-| --- | --- |
-| `src/App.jsx` | React Router, protected routes, session-aware browser notifications. Memeriksa notifikasi baru setiap 15 detik saat dashboard berjalan dan permission browser sudah diberikan. |
-| `src/context/AuthContext.jsx` | Memuat dan memvalidasi sesi, menyimpan profil/token di browser, logout, dan menangani sesi kedaluwarsa. |
-| `src/api/service.js` | HTTP client, Bearer token, autentikasi, profil, konfigurasi aquarium, telemetry, CSV export, dan notifikasi. Default API development `http://localhost:5000`; bisa diganti dengan `VITE_API_URL`. |
-| `src/pages/Login.jsx`, `Register.jsx` | Login dan pembuatan akun. |
-| `src/pages/Dashboard.jsx` | Status realtime, grafik suhu, kontrol manual, konfigurasi mode, jadwal, dan pemicu feeder. |
-| `src/pages/DataHistory.jsx` | Riwayat telemetry dalam tabel/kalender, pencarian, filter event, pagination lokal, dan ekspor CSV. Meminta hingga 500 record. |
-| `src/pages/Notifications.jsx` | Daftar notifikasi, mark read, mark all read, delete. |
-| `src/pages/Configuration.jsx` | Profil, password, unit suhu, timezone, frekuensi polling, threshold suhu, dan preferensi browser notification. |
-| `src/components/Layout.jsx` | Navigasi, header, dan jumlah notifikasi belum dibaca. |
-| `src/components/AreaChart.jsx` | Grafik area telemetry. |
-| `src/components/ui.jsx`, `Icons.jsx` | Komponen UI dan ikon yang dipakai halaman. |
+- `src/App.jsx`: routing halaman, proteksi sesi, browser notification polling setiap 15 detik.
+- `src/context/AuthContext.jsx`: validasi sesi dan profil user.
+- `src/api/service.js`: HTTP client, autentikasi, profil, aquarium, telemetry, export, dan alerts.
+- `src/pages/Login.jsx`, `Register.jsx`: login dan registrasi.
+- `src/pages/Dashboard.jsx`: status realtime, grafik, kontrol, konfigurasi mode, dan feeder.
+- `src/pages/DataHistory.jsx`: history telemetry satu aquarium, pencarian, filter, pagination, dan CSV.
+- `src/pages/Notifications.jsx`: alerts aquarium dan notifikasi profil privat.
+- `src/pages/Configuration.jsx`: profil, password, pengaturan aquarium, threshold, dan browser notification.
+- `src/components/Layout.jsx`: navigasi, header, dan badge alerts.
+- `src/components/AreaChart.jsx`, `ui.jsx`, `Icons.jsx`: chart, komponen UI, dan ikon.
 
 Browser notification memerlukan permission browser dan halaman dashboard tetap terbuka. Preferensinya lokal per browser/per pengguna; ini bukan push notification service dan tidak tersimpan di Firestore.
 
 ### Backend
 
-| Modul | Tanggung jawab |
-| --- | --- |
-| `index.js` | Express server, JSON body parser, CORS, health endpoint, route registration, dan error response. |
-| `config/firebase.js` | Menginisialisasi Firebase Admin dan Firestore dari `FIREBASE_SERVICE_ACCOUNT_JSON`, file service account, atau Application Default Credentials. |
-| `config/defaults.js` | Membuat dokumen aquarium awal beserta default realtime state dan konfigurasi. |
-| `config/security.js` | Memuat `JWT_SECRET`; untuk development dapat membuat secret lokal otomatis. |
-| `middleware/auth.js` | Memvalidasi Bearer JWT pengguna dan header `x-device-key` perangkat. |
-| `routes/auth.js` | Registrasi, login, password hashing dengan bcrypt, penerbitan JWT, dan perubahan password. Registrasi membuat user dan aquarium secara bersamaan. |
-| `routes/users.js` | Membaca dan memperbarui profil milik pengguna yang terautentikasi. |
-| `routes/aquariums.js` | Membaca aquarium, memperbarui config, trigger feeder manual, query/export telemetry, dan mengelola notifikasi. Memeriksa kepemilikan aquarium. |
-| `routes/hardware.js` | Menerima telemetry dari device, memvalidasi sensor/status, memperbarui realtime state, membuat riwayat telemetry dan alert suhu, serta menyediakan config untuk hardware. |
-| `utils/firestore.js` | Konversi timestamp ke ISO, serialisasi Firestore, dan pembentukan ID aquarium. |
+- `index.js`: Express server, JSON parser, CORS, health endpoint, route registration, dan error handling.
+- `config/firebase.js`: Firebase Admin/Firestore initialization dari environment, service-account file, atau ADC.
+- `config/defaults.js`: data awal aquarium, realtime state, dan konfigurasi.
+- `config/security.js`: `JWT_SECRET`; membuat secret lokal otomatis hanya untuk development.
+- `middleware/auth.js`: validasi Bearer JWT user dan header device key.
+- `routes/auth.js`: registrasi/login, bcrypt, JWT, perubahan password, dan cleanup field aquarium legacy pada user.
+- `routes/users.js`: membaca/memperbarui profil serta membuat notifikasi profil privat pada aquarium.
+- `routes/aquariums.js`: akses fixed aquarium ID, config, feeder, telemetry query/export, dan alerts.
+- `routes/hardware.js`: validasi telemetry untuk fixed aquarium ID, realtime state, temperature alerts, dan config perangkat.
+- `utils/firestore.js`: timestamp serialization dan aquarium ID untuk akun legacy.
 
 ### Function Inventory
 
-| Fungsi | Lokasi | Peran |
-| --- | --- | --- |
-| `createToken`, `createUserProfile` | `routes/auth.js` | Membuat JWT dan bentuk profil pengguna yang dikembalikan API. |
-| `userProfile` | `routes/users.js` | Membentuk respons profil pengguna. |
-| `parseLimit`, `parseDate` | `routes/aquariums.js` | Memvalidasi batas jumlah record dan tanggal filter. |
-| `ownedAquarium` | `routes/aquariums.js` | Memastikan aquarium ada dan dimiliki oleh user yang login. |
-| `patchConfig` | `routes/aquariums.js` | Memvalidasi field config lalu menyimpannya ke dokumen aquarium. |
-| `telemetryRecords`, `csvCell` | `routes/aquariums.js` | Mengambil riwayat dengan filter tanggal dan menulis nilai dengan aman ke CSV. |
-| `validStatus` | `routes/hardware.js` | Memastikan status aktuator termasuk nilai yang diterima API. |
-| `createDefaultAquarium` | `config/defaults.js` | Membentuk data awal aquarium saat user mendaftar. |
-| `requireAuth`, `requireDeviceKey` | `middleware/auth.js` | Memvalidasi JWT dashboard atau shared device key. |
-| `toIsoString`, `serializeFirestore`, `aquariumIdFor` | `utils/firestore.js` | Konversi timestamp, serialisasi hasil Firestore, dan pembuatan ID `aquarium-${userId}`. |
-| `request`, `apiFetch`, `queryString` | `frontend/src/api/service.js` | Mengirim HTTP request, menambahkan token/JSON headers, dan membuat query string. |
-| `login`, `register`, `changePassword`, `getUserProfile`, `updateUserProfile` | `frontend/src/api/service.js` | Operasi autentikasi dan profil. |
-| `getAquarium`, `updateTemperatureConfig`, `updateLightingConfig`, `updateFeederConfig`, `updateSystemConfig`, `triggerFeeder` | `frontend/src/api/service.js` | Membaca aquarium dan mengubah konfigurasi atau memicu feeder. |
-| `getTelemetry`, `exportTelemetry`, `getTemperatureChart` | `frontend/src/api/service.js` | Mengambil/export riwayat dan membentuk data grafik suhu. |
-| `getNotifications`, `markNotificationRead`, `markAllNotificationsRead`, `deleteNotification` | `frontend/src/api/service.js` | Operasi baca dan pengelolaan notifikasi. |
+- `createToken`, `createUserProfile` (`routes/auth.js`): JWT dan profil respons.
+- `joinSharedAquarium` (`routes/auth.js`): memastikan single aquarium tersedia dan menghapus aquarium IDs legacy dari user.
+- `migratePrivateNotifications` (`routes/auth.js`): memindahkan notifikasi privat lama ke subkoleksi notifications aquarium.
+- `userProfile` (`routes/users.js`): serialisasi profil tanpa aquarium IDs.
+- `parseLimit`, `parseDate`, `ownedAquarium` (`routes/aquariums.js`): validasi query dan fixed aquarium ID.
+- `patchConfig` (`routes/aquariums.js`): update config dan audit notification global.
+- `telemetryRecords`, `csvCell` (`routes/aquariums.js`): query history dan CSV-safe output.
+- `createDefaultAquarium` (`config/defaults.js`): initial aquarium data.
+- `requireAuth`, `requireDeviceKey` (`middleware/auth.js`): autentikasi dashboard/perangkat.
+- `serializeFirestore` (`utils/firestore.js`): serialisasi data Firestore.
+- `request`, `apiFetch`, `queryString` (`frontend/src/api/service.js`): request HTTP dan query serialization.
+- API service functions lain menangani auth, config, telemetry, export, dan notifications.
 
 ### Firmware Modules in the Design
 
 Modul berikut berasal dari dokumen rancangan Task 4. Modul ini mendeskripsikan pekerjaan firmware yang diharapkan, bukan source code yang tersedia di repository.
 
-| Modul rancangan | Input utama | Hasil / tanggung jawab |
-| --- | --- | --- |
-| `ReadWaterTemperature` | Pin OneWire, sensor index | Suhu Celsius; rancangan mengembalikan `-127.0` saat sensor terputus. |
-| `ControlTemperature` | Mode, suhu sekarang, suhu target, status manual | Status logika relay heater. |
-| `ControlLighting` | Mode, status manual, jam mulai/selesai | Status logika relay LED. |
-| `TriggerFeeder` | Mode, trigger manual, jadwal | Menggerakkan servo dan mengembalikan status eksekusi. |
-| `TriggerBuzzerAlarm` | Suhu sekarang, batas minimum/maksimum | Mengaktifkan alarm lokal saat suhu ekstrem. |
-| `DisplayOLED` | Suhu, waktu, status heater dan lampu | Menampilkan kondisi perangkat di OLED. |
-| `ConnectIoT` | SSID, password Wi-Fi, URL server | Menghubungkan ESP32 ke Wi-Fi dan API. |
-
+| Modul rancangan        | Input utama                                     | Hasil / tanggung jawab                                               |
+| ---------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| `ReadWaterTemperature` | Pin OneWire, sensor index                       | Suhu Celsius;                                                        |
+| `ControlTemperature`   | Mode, suhu sekarang, suhu target, status manual | Status logika relay heater.                                          |
+| `ControlLighting`      | Mode, status manual, jam mulai/selesai          | Status logika relay LED.                                             |
+| `TriggerFeeder`        | Mode, trigger manual, jadwal                    | Menggerakkan servo dan mengembalikan status eksekusi.                |
+| `TriggerBuzzerAlarm`   | Suhu sekarang, batas minimum/maksimum           | Mengaktifkan alarm lokal saat suhu ekstrem.                          |
+| `DisplayOLED`          | Suhu, waktu, status heater dan lampu            | Menampilkan kondisi perangkat di OLED.                               |
+| `ConnectIoT`           | SSID, password Wi-Fi, URL server                | Menghubungkan ESP32 ke Wi-Fi dan API.                                |
 
 ## Database
 
@@ -97,70 +86,68 @@ Database: **Firebase Cloud Firestore**. Firebase Admin SDK hanya diakses backend
 
 ### `users/{userId}`
 
-| Field | Tipe | Catatan |
-| --- | --- | --- |
-| `fullName` | string | Nama pengguna |
-| `email` | string | Email unik untuk login |
-| `password` | string | Hash bcrypt, bukan password plain text |
-| `photoUrl` | string atau null | URL foto profil |
-| `createdAt`, `updatedAt` | timestamp | Waktu pembuatan/perubahan |
+| Field                    | Tipe             | Catatan                                |
+| ------------------------ | ---------------- | -------------------------------------- |
+| `fullName`               | string           | Nama pengguna                          |
+| `email`                  | string           | Email unik untuk login                 |
+| `password`               | string           | Hash bcrypt, bukan password plain text |
+| `photoUrl`               | string atau null | URL foto profil                        |
+| `createdAt`, `updatedAt` | timestamp        | Waktu pembuatan/perubahan              |
 
 ### `aquariums/{aquariumId}`
 
-ID aquarium dibuat sebagai `aquarium-${userId}`. Dokumen menyimpan `userId` pemilik dan konfigurasi/status berikut.
+Sistem menggunakan satu dokumen aquarium dengan ID dari `SHARED_AQUARIUM_ID` (default `aquarium-001`). Semua user terautentikasi dapat mengakses ID tersebut; route menolak ID lain. `userId` menyimpan ID pembuat sesuai schema PDF.
 
-| Field | Tipe | Catatan |
-| --- | --- | --- |
-| `hardwareInfo` | object | `microcontroller`, `tempSensor`, `lighting`, `feeder`, `firmwareVersion` |
-| `realtimeState` | object | `currentTemp` (Celsius), `heaterStatus` (`ON`/`OFF`), `ledStatus` (`ON`/`OFF`), `feederStatus` (`Idle`/`Active`), `lastUpdated` |
-| `tempConfig` | object | `unit`, `targetTemp`, `minTempThreshold`, `maxTempThreshold`, `mode`, `manualControlState` |
-| `lightingConfig` | object | `mode`, `manualControlState`, `schedule` (`startTime`, `endTime`, `durationHours`, `isActive`), `avgHoursOn`, `avgHoursOff` |
-| `feederConfig` | object | `mode`, `schedules` (array of `{ time, isActive }`) |
-| `systemConfig` | object | `unit`, `pollFrequency` (seconds), `timezone` |
-| `userId` | string | Owner user ID |
-| `updatedAt` | timestamp | Last config update, when present |
+| Field            | Tipe      | Catatan                                                                                                                         |
+| ---------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `hardwareInfo`   | object    | `microcontroller`, `tempSensor`, `lighting`, `feeder`, `firmwareVersion`                                                        |
+| `realtimeState`  | object    | `currentTemp` (Celsius), `heaterStatus` (`ON`/`OFF`), `ledStatus` (`ON`/`OFF`), `feederStatus` (`Idle`/`Active`), `lastUpdated` |
+| `tempConfig`     | object    | `unit`, `targetTemp`, `minTempThreshold`, `maxTempThreshold`, `mode`, `manualControlState`                                      |
+| `lightingConfig` | object    | `mode`, `manualControlState`, `schedule` (`startTime`, `endTime`, `durationHours`, `isActive`), `avgHoursOn`, `avgHoursOff`     |
+| `feederConfig`   | object    | `mode`, `schedules` (array of `{ time, isActive }`)                                                                             |
+| `systemConfig`   | object    | `pollFrequency` (seconds), `timezone`                                                                                           |
+| `userId`         | string    | Owner user ID                                                                                                                   |
+| `updatedAt`      | timestamp | Last config update, when present                                                                                                |
+
+Endpoint `PATCH /api/aquariums/:aquariumId/system-config` tetap menerima parameter `unit` sesuai daftar API PDF, tetapi backend menyimpannya pada `tempConfig.unit`. `systemConfig` yang disimpan hanya berisi `pollFrequency` dan `timezone`.
 
 ### Subcollections
 
-- `aquariums/{aquariumId}/telemetry_history/{autoId}`: `timestamp`, `temp` (Celsius), `heaterState`, `ledState`, `feederState`, `event`.
-- `aquariums/{aquariumId}/notifications/{autoId}`: `title`, `message`, `type`, `isRead`, `timestamp`.
+- `aquariums/{aquariumId}/telemetry_history/{autoId}`: data hardware (`timestamp`, `temp` Celsius, `heaterState`, `ledState`, `feederState`, `event`) dengan `aquariumId`; `userId` bernilai `null` karena telemetry dikirim perangkat.
+- `aquariums/{AQUARIUM_ID}/notifications/{autoId}`: semua notifikasi. `userid` adalah penerima (`null` untuk global), `aquariumId` adalah aquarium sumber, `userId` tambahan mencatat pelaku (`null` untuk hardware), serta `title`, `message`, `type`, dan `timestamp`. Field tambahan: `scope`, `actorName`, `readBy`, `dismissedBy`, dan `isRead`.
 
-Telemetry POST updates `realtimeState` and adds a telemetry record in one Firestore batch. A notification is created when temperature crosses from in-range to out-of-range; returning in range and crossing again can create another alert. A manual feeder trigger also creates an info notification and updates `realtimeState.feederStatus` in Firestore. It does not currently enqueue or send a one-time command to ESP32, so the device may not actually activate its servo from this API call.
+Data history hanya memuat dokumen telemetry hardware, bukan notifikasi, dan selalu membaca satu aquarium. `aquariumId` menunjukkan konteks sumber; `userId` bernilai `null` karena record dibuat hardware. Pada notifications, `userid` adalah penerima privat atau `null` untuk global, sedangkan `userId` adalah pelaku event tambahan. Notifikasi profil/password juga disimpan di subkoleksi aquarium dan difilter berdasarkan `userid`. Status baca/dismiss global bersifat per-user melalui `readBy` dan `dismissedBy`.
 
 ## API
 
 Base URL defaults to `http://localhost:5000`. Dashboard endpoints use `Authorization: Bearer <token>` unless marked **Public** or **Device key**. JSON request bodies use `Content-Type: application/json`.
 
-| Method | Endpoint | Auth | Fungsi / parameter utama |
-| --- | --- | --- | --- |
-| `GET` | `/api/health` | Public | Health status `{ status: "ok" }` |
-| `POST` | `/api/auth/register` | Public | Body: `fullName`, `email`, `password`, optional `photoUrl`; creates user and aquarium. |
-| `POST` | `/api/auth/login` | Public | Body: `email`, `password`; returns token/profile. |
-| `POST` | `/api/auth/change-password` | Bearer | Body: `currentPassword`, `newPassword`. |
-| `GET` | `/api/users/:userId` | Bearer | Read own profile only. |
-| `PUT` | `/api/users/:userId` | Bearer | Update own `fullName` and/or `photoUrl`. |
-| `GET` | `/api/aquariums/:aquariumId` | Bearer | Read own aquarium document. |
-| `PATCH` | `/api/aquariums/:aquariumId/temperature-config` | Bearer | `unit`, `targetTemp`, `minTempThreshold`, `maxTempThreshold`, `mode`, `manualControlState`. |
-| `PATCH` | `/api/aquariums/:aquariumId/lighting-config` | Bearer | `mode`, `manualControlState`, `schedule`, `avgHoursOn`, `avgHoursOff`. |
-| `PATCH` | `/api/aquariums/:aquariumId/feeder-config` | Bearer | `mode`, `schedules`. |
-| `PATCH` | `/api/aquariums/:aquariumId/system-config` | Bearer | `unit`, `pollFrequency`, `timezone`. |
-| `POST` | `/api/aquariums/:aquariumId/feeder/trigger` | Bearer | No body; only allowed in `MANUAL` feeder mode. Updates server state and writes a notification. |
-| `GET` | `/api/aquariums/:aquariumId/telemetry` | Bearer | Query: `startDate`, `endDate`, `limit` (default 40, max 500). |
-| `GET` | `/api/aquariums/:aquariumId/telemetry/export` | Bearer | Query: `startDate`, `endDate`, `format=csv`, optional `limit`; returns CSV. |
-| `GET` | `/api/aquariums/:aquariumId/notifications` | Bearer | Query: `limit` (default 100, max 500), `readStatus=read\|unread`. |
-| `PATCH` | `/api/aquariums/:aquariumId/notifications/read-all` | Bearer | Mark all unread notifications read. |
-| `PATCH` | `/api/aquariums/:aquariumId/notifications/:notificationId/read` | Bearer | Mark one notification read. |
-| `DELETE` | `/api/aquariums/:aquariumId/notifications/:notificationId` | Bearer | Delete one notification. |
-| `POST` | `/api/hardware/:aquariumId/telemetry` | Device key | Header: `x-device-key`. Body: `currentTemp`, `heaterStatus`, `ledStatus`, `feederStatus`, optional `event`. |
-| `GET` | `/api/hardware/:aquariumId/config` | Device key | Returns `tempConfig`, `lightingConfig`, `feederConfig`, `systemConfig`. |
+- Public: `GET /api/health`; `POST /api/auth/register` (`fullName`, `email`, `password`, optional `photoUrl`); `POST /api/auth/login` (`email`, `password`).
+- Bearer: `POST /api/auth/change-password` (`currentPassword`, `newPassword`).
+- Bearer: `GET` and `PUT /api/users/:userId` for the signed-in user's profile.
+- Bearer: aquarium route IDs must match the single configured `SHARED_AQUARIUM_ID`; other IDs return 404.
+- Bearer: `GET /api/aquariums/:aquariumId` reads the shared aquarium.
+- Bearer: `PATCH /api/aquariums/:aquariumId/temperature-config` accepts `unit`, `targetTemp`, thresholds, `mode`, and `manualControlState`.
+- Bearer: `PATCH /api/aquariums/:aquariumId/lighting-config` accepts `mode`, `manualControlState`, `schedule`, `avgHoursOn`, and `avgHoursOff`.
+- Bearer: `PATCH /api/aquariums/:aquariumId/feeder-config` accepts `mode` and `schedules`.
+- Bearer: `PATCH /api/aquariums/:aquariumId/system-config` accepts `unit`, `pollFrequency`, and `timezone`.
+- Bearer: each actual config change above writes a shared notification with actor attribution.
+- Bearer: `POST /api/aquariums/:aquariumId/feeder/trigger` has no body and requires feeder mode `MANUAL`.
+- Bearer: `GET /api/aquariums/:aquariumId/telemetry` supports `startDate`, `endDate`, and `limit` (default 40, maximum 500).
+- Bearer: `GET /api/aquariums/:aquariumId/telemetry/export` supports date filters and `format=csv`.
+- Bearer: `GET /api/aquariums/:aquariumId/notifications` supports `limit` (default 100, maximum 500) and `readStatus=read|unread`.
+- Bearer: `PATCH /api/aquariums/:aquariumId/notifications/read-all` and `PATCH /api/aquariums/:aquariumId/notifications/:notificationId/read` update read state for the current user.
+- Bearer: `DELETE /api/aquariums/:aquariumId/notifications/:notificationId` dismisses a shared alert for the current user or deletes a private alert.
+- Device key: `POST /api/hardware/:aquariumId/telemetry` requires `x-device-key` and accepts `currentTemp`, `heaterStatus`, `ledStatus`, `feederStatus`, and optional `event`.
+- Device key: `GET /api/hardware/:aquariumId/config` returns `tempConfig`, `lightingConfig`, `feederConfig`, and `systemConfig`.
 
 ## Running Frontend and Backend Separately
 
-Use Node.js 22. Backend defaults to port `5000` in `backend/.env.example`; Vite defaults to port `5173`.
+Use Node.js 22. Backend code defaults to port `3000`; `backend/.env.example` sets `PORT=5000`. Vite defaults to port `5173`.
 
-1. Copy `backend/.env.example` to `backend/.env` and fill in `JWT_SECRET`, `HARDWARE_API_KEY`, and Firebase credentials. Never commit the filled `.env` or service-account key.
+1. Copy `backend/.env.example` to `backend/.env` and `frontend/.env.example` to `frontend/.env`. Set `SHARED_AQUARIUM_ID` and `VITE_AQUARIUM_ID` to the same value. Fill in `JWT_SECRET`, `HARDWARE_API_KEY`, and Firebase credentials. Never commit filled `.env` files or service-account keys.
 2. Terminal 1: `cd backend`, `npm install`, `npm run dev`.
-3. Terminal 2: `cd frontend`, `npm install`, `npm run dev`.
-4. Open `http://localhost:5173`.
+3. Terminal 2: `cd frontend`, `pnpm install`, `pnpm dev`.
+4. Open the Vite URL, normally `http://localhost:5173`.
 
 Check backend availability at `http://localhost:5000/api/health`.

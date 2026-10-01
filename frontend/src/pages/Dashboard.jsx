@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+    AQUARIUM_ID,
     getAquarium,
     getNotifications,
     getTelemetry,
@@ -198,7 +199,7 @@ export default function DashboardPage({ onSystemChange }) {
     const { tab = "overview" } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
-    const aqId = user?.aquariumId;
+    const aqId = AQUARIUM_ID;
 
     const [aquarium, setAquarium] = useState(null);
     const [chartData, setChartData] = useState([]);
@@ -212,6 +213,8 @@ export default function DashboardPage({ onSystemChange }) {
 
     useEffect(() => {
         let isMounted = true;
+        setLoading(true);
+        setLoadError("");
 
         const loadDashboard = async () => {
             try {
@@ -237,11 +240,10 @@ export default function DashboardPage({ onSystemChange }) {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [aqId]);
 
     const setTab = t => navigate(`/dashboard${t === "overview" ? "" : "/" + t}`, { replace: true });
 
-    // Patch aquarium state locally and call API
     const patchAquarium = async (section, patch, apiFn) => {
         setActionError("");
         setActionSaving(true);
@@ -331,7 +333,7 @@ export default function DashboardPage({ onSystemChange }) {
                 <LiveClock timezone={aquarium.systemConfig.timezone} />
             </div>
 
-            {/* Horizontal scroll tabs */}
+            {/* Dashboard tabs */}
             <div className="flex gap-1 overflow-x-auto pb-1 mb-5 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
                 {TABS.map(t => (
                     <button
@@ -348,26 +350,24 @@ export default function DashboardPage({ onSystemChange }) {
                 ))}
             </div>
 
-            {/* ── Overview ── */}
+            {/* Overview section */}
             {activeTab === "overview" && (
                 <div className="space-y-4">
-                    {/* Temp hero */}
+                    {/* Temperature summary */}
                     <Card>
                         <p className="text-xs font-semibold text-slate-500 mb-1">Real-time water temperature</p>
                         <div className="flex items-baseline gap-1 mb-3">
                             <span className="text-5xl font-bold text-blue-600">
-                                {fmtTempVal(realtimeState.currentTemp, aquarium.systemConfig.unit)}
+                                {fmtTempVal(realtimeState.currentTemp, tempConfig.unit)}
                             </span>
                             {realtimeState.currentTemp !== null && realtimeState.currentTemp !== undefined && (
-                                <span className="text-xl text-blue-400 font-semibold">
-                                    {tempUnit(aquarium.systemConfig.unit)}
-                                </span>
+                                <span className="text-xl text-blue-400 font-semibold">{tempUnit(tempConfig.unit)}</span>
                             )}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <InfoField
                                 label="Target temperature"
-                                value={fmtTemp(tempConfig.targetTemp, aquarium.systemConfig.unit)}
+                                value={fmtTemp(tempConfig.targetTemp, tempConfig.unit)}
                             />
                             <InfoField label="Last update" value={relativeTime(realtimeState.lastUpdated)} />
                         </div>
@@ -408,41 +408,27 @@ export default function DashboardPage({ onSystemChange }) {
                         </div>
                     </Card>
 
-                    {/* Chart — full-bleed, 12h */}
+                    {/* Temperature chart */}
                     <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
                         <div className="flex items-baseline justify-between px-4 pt-4 pb-2">
                             <div>
                                 <p className="text-xs font-semibold text-slate-500">Temperature Monitor · Last 12h</p>
                                 <span className="text-3xl font-bold text-blue-600">
-                                    {fmtTempVal(realtimeState.currentTemp, aquarium.systemConfig.unit)}{" "}
+                                    {fmtTempVal(realtimeState.currentTemp, tempConfig.unit)}{" "}
                                     {realtimeState.currentTemp !== null && realtimeState.currentTemp !== undefined && (
-                                        <span className="text-base text-blue-400">
-                                            {tempUnit(aquarium.systemConfig.unit)}
-                                        </span>
+                                        <span className="text-base text-blue-400">{tempUnit(tempConfig.unit)}</span>
                                     )}
                                 </span>
                             </div>
                             {chartData.length > 0 && (
                                 <div className="grid grid-cols-3 gap-3 text-center">
                                     {[
-                                        [
-                                            fmtTemp(
-                                                Math.max(...chartData.map(d => d.temp)),
-                                                aquarium.systemConfig.unit,
-                                            ),
-                                            "High",
-                                        ],
-                                        [
-                                            fmtTemp(
-                                                Math.min(...chartData.map(d => d.temp)),
-                                                aquarium.systemConfig.unit,
-                                            ),
-                                            "Low",
-                                        ],
+                                        [fmtTemp(Math.max(...chartData.map(d => d.temp)), tempConfig.unit), "High"],
+                                        [fmtTemp(Math.min(...chartData.map(d => d.temp)), tempConfig.unit), "Low"],
                                         [
                                             fmtTemp(
                                                 chartData.reduce((a, d) => a + d.temp, 0) / chartData.length,
-                                                aquarium.systemConfig.unit,
+                                                tempConfig.unit,
                                             ),
                                             "Avg",
                                         ],
@@ -458,7 +444,7 @@ export default function DashboardPage({ onSystemChange }) {
                         <AreaChart data={chartData} height={220} />
                     </div>
 
-                    {/* Recent Data + Recent Alerts */}
+                    {/* Recent data and alerts */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Card>
                             <div className="flex items-center justify-between mb-3">
@@ -487,7 +473,7 @@ export default function DashboardPage({ onSystemChange }) {
                                         </div>
                                         <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                                             <span className="text-sm font-bold text-blue-600">
-                                                {fmtTemp(r.temp, aquarium.systemConfig.unit)}
+                                                {fmtTemp(r.temp, tempConfig.unit)}
                                             </span>
                                             <StatusBadge status={r.heaterState} />
                                         </div>
@@ -543,14 +529,14 @@ export default function DashboardPage({ onSystemChange }) {
                 </div>
             )}
 
-            {/* ── Temperature ── */}
+            {/* Temperature section */}
             {activeTab === "temperature" && (
                 <div className="space-y-4">
                     <Card>
                         <p className="text-xs font-semibold text-slate-500 mb-1">Live Water Temperature</p>
                         <div className="flex items-baseline gap-1 mb-3">
                             <span className="text-4xl font-bold text-blue-600">
-                                {fmtTemp(realtimeState.currentTemp, aquarium.systemConfig.unit)}
+                                {fmtTemp(realtimeState.currentTemp, tempConfig.unit)}
                             </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -582,7 +568,7 @@ export default function DashboardPage({ onSystemChange }) {
                         <div className="flex justify-between text-xs text-slate-500 mb-1">
                             <span>Target</span>
                             <span className="font-bold text-slate-700">
-                                {fmtTemp(tempConfig.targetTemp, aquarium.systemConfig.unit)}
+                                {fmtTemp(tempConfig.targetTemp, tempConfig.unit)}
                             </span>
                         </div>
                         <input
@@ -609,8 +595,8 @@ export default function DashboardPage({ onSystemChange }) {
                             }}
                         />
                         <div className="flex justify-between text-xs text-slate-400 mb-4">
-                            <span>{fmtTemp(18, aquarium.systemConfig.unit)}</span>
-                            <span>{fmtTemp(30, aquarium.systemConfig.unit)}</span>
+                            <span>{fmtTemp(18, tempConfig.unit)}</span>
+                            <span>{fmtTemp(30, tempConfig.unit)}</span>
                         </div>
                         <div className="flex gap-2">
                             <button
@@ -667,7 +653,7 @@ export default function DashboardPage({ onSystemChange }) {
                 </div>
             )}
 
-            {/* ── Lighting ── */}
+            {/* Lighting section */}
             {activeTab === "lighting" && (
                 <div className="space-y-4">
                     <Card>
@@ -761,7 +747,7 @@ export default function DashboardPage({ onSystemChange }) {
                 </div>
             )}
 
-            {/* Add feeding time modal */}
+            {/* Feeding schedule modal */}
             {showAddTime && (
                 <AddTimeModal
                     onAdd={t => {
@@ -772,7 +758,7 @@ export default function DashboardPage({ onSystemChange }) {
                 />
             )}
 
-            {/* ── Feeder ── */}
+            {/* Feeder section */}
             {activeTab === "feeder" && (
                 <div className="space-y-4">
                     <Card>

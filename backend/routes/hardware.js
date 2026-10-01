@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { AQUARIUM_ID } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireDeviceKey } from "../middleware/auth.js";
 import { serializeFirestore } from "../utils/firestore.js";
@@ -7,6 +8,7 @@ const router = Router();
 router.use(requireDeviceKey);
 
 router.post("/:aquariumId/telemetry", async (req, res) => {
+    if (req.params.aquariumId !== AQUARIUM_ID) return res.status(404).json({ message: "Aquarium was not found." });
     const { currentTemp, heaterStatus, ledStatus, feederStatus } = req.body;
     const validStatus = (value, allowed) => allowed.includes(value);
 
@@ -40,6 +42,8 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         "realtimeState.lastUpdated": admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.set(telemetryRef, {
+        userId: null,
+        aquariumId: AQUARIUM_ID,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         temp: currentTemp,
         heaterState: heaterStatus,
@@ -62,10 +66,17 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         const notificationRef = aquariumRef.collection("notifications").doc();
         const message = `Water temperature is ${direction} the configured threshold of ${threshold}°C (${currentTemp}°C).`;
         batch.set(notificationRef, {
+            userid: null,
+            userId: null,
+            aquariumId: AQUARIUM_ID,
+            actorName: "Aquarium hardware",
+            scope: "aquarium",
             title: "Temperature Alert",
             message,
             type: "alert",
             isRead: false,
+            readBy: [],
+            dismissedBy: [],
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
         });
     }
@@ -75,15 +86,18 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
 });
 
 router.get("/:aquariumId/config", async (req, res) => {
+    if (req.params.aquariumId !== AQUARIUM_ID) return res.status(404).json({ message: "Aquarium was not found." });
     const aquarium = await db.collection("aquariums").doc(req.params.aquariumId).get();
     if (!aquarium.exists) return res.status(404).json({ message: "Aquarium was not found." });
     const data = aquarium.data();
+    const systemConfig = { ...data.systemConfig };
+    delete systemConfig.unit;
     return res.json(
         serializeFirestore({
             tempConfig: data.tempConfig,
             lightingConfig: data.lightingConfig,
             feederConfig: data.feederConfig,
-            systemConfig: data.systemConfig,
+            systemConfig,
         }),
     );
 });

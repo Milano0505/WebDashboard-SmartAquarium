@@ -49,7 +49,6 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [collapsed, setCollapsed] = useState(false);
-
     const displayName = user?.fullName || user?.name || "Aquarist";
     const initials =
         displayName !== "Aquarist"
@@ -78,7 +77,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
 
     return (
         <div className="min-h-screen bg-slate-100 flex">
-            {/* SIDEBAR */}
+            {/* Sidebar */}
             <aside
                 id="desktop-sidebar"
                 className={`hidden md:flex flex-col ${sidebarW} fixed top-0 left-0 bottom-0 flex-shrink-0 shadow-xl z-30 overflow-hidden transition-all duration-200`}
@@ -119,7 +118,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                     })}
                 </nav>
 
-                {/* Sign out */}
+                {/* Sign-out control */}
                 <div className="px-3 py-4 border-t border-white/10 flex-shrink-0">
                     <button
                         onClick={handleSignOut}
@@ -148,14 +147,14 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                 {collapsed ? <ChevronRight /> : <ChevronLeft />}
             </button>
 
-            {/* ── MAIN AREA ── */}
+            {/* Main area */}
             <div className={`flex-1 flex flex-col min-h-screen min-w-0 ${marginL} transition-all duration-200`}>
-                {/* ── FIXED HEADER — full width, no scrollbar ── */}
+                {/* Fixed header */}
                 <header
                     className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 md:px-6 h-14 md:h-16 shadow-sm overflow-hidden"
                     style={{ background: "#0d1b4b" }}
                 >
-                    {/* Left: logo always + page title on desktop */}
+                    {/* Header identity */}
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2 text-white">
                             <Fish />
@@ -170,14 +169,14 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                                 </div>
                             )}
                         </div>
-                        {/* Divider + page title — desktop only */}
+                        {/* Page title */}
                         <div className="hidden md:flex items-center gap-3">
                             <span className="w-px h-6 bg-white/20" />
                             <span className="text-white/70 text-sm font-semibold">{pageLabel}</span>
                         </div>
                     </div>
 
-                    {/* Right: profile */}
+                    {/* Profile control */}
                     <button
                         onClick={() => navigate("/configuration")}
                         className="flex items-center gap-2.5 flex-shrink-0"
@@ -204,7 +203,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                     </button>
                 </header>
 
-                {/* Scrollable page content — offset for fixed header */}
+                {/* Page content */}
                 <main
                     className="flex-1 overflow-y-auto scroll-area md:p-6 mt-14 md:mt-16"
                     style={{
@@ -238,7 +237,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                 </div>
             )}
 
-            {/* ── MOBILE BOTTOM TAB BAR ── */}
+            {/* Mobile navigation */}
             <nav
                 className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-slate-200 bg-white md:hidden"
                 style={{

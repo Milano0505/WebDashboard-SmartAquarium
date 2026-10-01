@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { getNotifications } from "./api/service";
+import { AQUARIUM_ID, getNotifications } from "./api/service";
 import Layout from "./components/Layout";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import ConfigurationPage from "./pages/Configuration";
@@ -45,7 +45,36 @@ function AppRoutes() {
         return () => window.clearTimeout(timeoutId);
     }, [systemNotice]);
 
-    const notifySystemChange = message => setSystemNotice(message);
+    const notifySystemChange = message => {
+        setSystemNotice(message);
+        window.dispatchEvent(new Event("sa:notifications-changed"));
+    };
+
+    useEffect(() => {
+        if (!user) {
+            setNotifCount(0);
+            return undefined;
+        }
+
+        let isActive = true;
+        const refreshCount = async () => {
+            try {
+                const { notificationRecords } = await getNotifications(AQUARIUM_ID, { limit: 500 });
+                if (isActive) setNotifCount(notificationRecords.filter(record => !record.isRead).length);
+            } catch (error) {
+                console.warn("Unable to refresh the alert count.", error);
+            }
+        };
+
+        refreshCount();
+        window.addEventListener("sa:notifications-changed", refreshCount);
+        const intervalId = window.setInterval(refreshCount, 10_000);
+        return () => {
+            isActive = false;
+            window.removeEventListener("sa:notifications-changed", refreshCount);
+            window.clearInterval(intervalId);
+        };
+    }, [user?.id]);
 
     useEffect(() => {
         try {
@@ -96,14 +125,14 @@ function AppRoutes() {
 
     useEffect(() => {
         knownNotificationIds.current = null;
-        if (!browserNotificationsEnabled || browserNotificationPermission !== "granted" || !user?.aquariumId) {
+        if (!browserNotificationsEnabled || browserNotificationPermission !== "granted" || !user) {
             return undefined;
         }
 
         let isActive = true;
         const checkForNotifications = async () => {
             try {
-                const { notificationRecords } = await getNotifications(user.aquariumId, { limit: 100 });
+                const { notificationRecords } = await getNotifications(AQUARIUM_ID, { limit: 100 });
                 if (!isActive) return;
 
                 if (knownNotificationIds.current) {
@@ -135,7 +164,7 @@ function AppRoutes() {
             isActive = false;
             window.clearInterval(intervalId);
         };
-    }, [browserNotificationPermission, browserNotificationsEnabled, user?.aquariumId]);
+    }, [browserNotificationPermission, browserNotificationsEnabled, user?.id]);
 
     return (
         <Routes>
@@ -180,7 +209,6 @@ function AppRoutes() {
                                                 browserNotificationPermission !== "unsupported"
                                             }
                                             onBrowserNotificationsChange={updateBrowserNotifications}
-                                            onSystemChange={notifySystemChange}
                                         />
                                     }
                                 />

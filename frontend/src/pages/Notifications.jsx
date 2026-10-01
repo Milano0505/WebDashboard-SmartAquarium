@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+    AQUARIUM_ID,
     deleteNotification,
     getAquarium,
     getNotifications,
@@ -12,7 +13,6 @@ import {
 import { Check, Trash } from "../components/Icons";
 
 import { ErrorAlert, PageHeader, Spinner } from "../components/ui";
-import { useAuth } from "../context/AuthContext";
 
 const TYPE = {
     alert: {
@@ -38,8 +38,7 @@ const TYPE = {
 };
 
 export default function NotificationsPage({ onCountChange, onSystemChange }) {
-    const { user } = useAuth();
-    const aqId = user?.aquariumId;
+    const aqId = AQUARIUM_ID;
     const [items, setItems] = useState([]);
 
     const [timezone, setTimezone] = useState("Asia/Manila");
@@ -54,10 +53,15 @@ export default function NotificationsPage({ onCountChange, onSystemChange }) {
 
     useEffect(() => {
         let isMounted = true;
+        setLoading(true);
+        setLoadError("");
 
         const loadNotifications = async () => {
             try {
-                const [notifications, aquarium] = await Promise.all([getNotifications(aqId), getAquarium(aqId)]);
+                const [notifications, aquarium] = await Promise.all([
+                    getNotifications(aqId, { limit: 500 }),
+                    getAquarium(aqId),
+                ]);
 
                 if (!isMounted) return;
 
@@ -76,7 +80,7 @@ export default function NotificationsPage({ onCountChange, onSystemChange }) {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [aqId]);
 
     useEffect(() => {
         onCountChange?.(items.filter(n => !n.isRead).length);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+    AQUARIUM_ID,
     changePassword,
     getAquarium,
     updateSystemConfig,
@@ -30,11 +31,10 @@ export default function ConfigurationPage({
     browserNotificationsEnabled,
     browserNotificationsSupported,
     onBrowserNotificationsChange,
-    onSystemChange,
 }) {
     const { user, setUser, signOut } = useAuth();
     const navigate = useNavigate();
-    const aqId = user?.aquariumId;
+    const aqId = AQUARIUM_ID;
 
     const [tab, setTab] = useState("profile");
     const [aquarium, setAquarium] = useState(null);
@@ -64,6 +64,8 @@ export default function ConfigurationPage({
 
     useEffect(() => {
         let isMounted = true;
+        setLoading(true);
+        setLoadError("");
 
         const loadConfiguration = async () => {
             try {
@@ -80,7 +82,7 @@ export default function ConfigurationPage({
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [aqId]);
 
     useEffect(
         () => () => {
@@ -123,7 +125,7 @@ export default function ConfigurationPage({
             setPhotoUrl(savedPhotoUrl);
             setSelectedPhoto(null);
             setProfileSaved("Profile updated successfully.");
-            onSystemChange?.("Profile updated successfully.");
+            window.dispatchEvent(new Event("sa:notifications-changed"));
         } catch (err) {
             setProfileError(err instanceof Error ? err.message : "Could not save profile.");
         } finally {
@@ -153,7 +155,7 @@ export default function ConfigurationPage({
                 newPassword: pwForm.next,
             });
             setPwSaved("Password updated successfully.");
-            onSystemChange?.("Password updated successfully.");
+            window.dispatchEvent(new Event("sa:notifications-changed"));
             setPwForm({ current: "", next: "", confirm: "" });
         } catch (err) {
             setPwError(err instanceof Error ? err.message : "Could not change password.");
@@ -167,10 +169,11 @@ export default function ConfigurationPage({
         setSettingsSaved("");
         setSettingsSaving(true);
         try {
-            const { unit, pollFrequency, timezone } = aquarium.systemConfig;
+            const { pollFrequency, timezone } = aquarium.systemConfig;
+            const unit = aquarium.tempConfig.unit;
             await updateSystemConfig(aqId, { unit, pollFrequency, timezone });
             setSettingsSaved("System settings saved successfully.");
-            onSystemChange?.("Configuration updated successfully.");
+            window.dispatchEvent(new Event("sa:notifications-changed"));
         } catch (error) {
             setSettingsError(error instanceof Error ? error.message : "Could not save system settings.");
         } finally {
@@ -188,7 +191,7 @@ export default function ConfigurationPage({
                 maxTempThreshold: aquarium.tempConfig.maxTempThreshold,
             });
             setSettingsSaved("Alert settings saved successfully.");
-            onSystemChange?.("Alert configuration updated successfully.");
+            window.dispatchEvent(new Event("sa:notifications-changed"));
         } catch (error) {
             setSettingsError(error instanceof Error ? error.message : "Could not save alert settings.");
         } finally {
@@ -207,7 +210,6 @@ export default function ConfigurationPage({
                 setSettingsError("Notifications are blocked for this site. Allow them in your browser settings.");
             } else {
                 setSettingsSaved(enabled ? "Browser notifications enabled." : "Browser notifications disabled.");
-                onSystemChange?.("Notification preferences updated successfully.");
             }
         } catch (error) {
             setSettingsError(error instanceof Error ? error.message : "Could not update browser notifications.");
@@ -403,11 +405,11 @@ export default function ConfigurationPage({
                                     onClick={() =>
                                         setAquarium(a => ({
                                             ...a,
-                                            systemConfig: { ...a.systemConfig, unit: u },
+                                            tempConfig: { ...a.tempConfig, unit: u },
                                         }))
                                     }
                                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors ${
-                                        systemConfig.unit === u
+                                        tempConfig.unit === u
                                             ? "bg-blue-500 text-white"
                                             : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                                     }`}
@@ -517,12 +519,18 @@ export default function ConfigurationPage({
             {tab === "alerts" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                     <Card className="space-y-5">
-                        <p className="text-sm font-bold text-slate-700">Temperature Thresholds</p>
+                        <div>
+                            <p className="text-sm font-bold text-slate-700">Temperature Thresholds</p>
+                            <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                                These Celsius limits trigger an alert when telemetry goes outside the range. They do not
+                                set the heater target or control the heater.
+                            </p>
+                        </div>
                         <div>
                             <div className="flex justify-between mb-1">
                                 <label className="text-xs font-semibold text-slate-600">Min Temperature</label>
                                 <span className="text-xs font-bold text-blue-600">
-                                    {fmtTemp(tempConfig.minTempThreshold, systemConfig.unit)}
+                                    {fmtTemp(tempConfig.minTempThreshold, tempConfig.unit)}
                                 </span>
                             </div>
                             <input
@@ -545,8 +553,8 @@ export default function ConfigurationPage({
                                 }}
                             />
                             <div className="flex justify-between text-xs text-slate-400 mt-1">
-                                <span>{fmtTemp(10, systemConfig.unit)}</span>
-                                <span>{fmtTemp(25, systemConfig.unit)}</span>
+                                <span>{fmtTemp(10, tempConfig.unit)}</span>
+                                <span>{fmtTemp(25, tempConfig.unit)}</span>
                             </div>
                         </div>
 
@@ -554,7 +562,7 @@ export default function ConfigurationPage({
                             <div className="flex justify-between mb-1">
                                 <label className="text-xs font-semibold text-slate-600">Max Temperature</label>
                                 <span className="text-xs font-bold text-red-500">
-                                    {fmtTemp(tempConfig.maxTempThreshold, systemConfig.unit)}
+                                    {fmtTemp(tempConfig.maxTempThreshold, tempConfig.unit)}
                                 </span>
                             </div>
                             <input
@@ -577,8 +585,8 @@ export default function ConfigurationPage({
                                 }}
                             />
                             <div className="flex justify-between text-xs text-slate-400 mt-1">
-                                <span>{fmtTemp(22, systemConfig.unit)}</span>
-                                <span>{fmtTemp(35, systemConfig.unit)}</span>
+                                <span>{fmtTemp(22, tempConfig.unit)}</span>
+                                <span>{fmtTemp(35, tempConfig.unit)}</span>
                             </div>
                         </div>
                         <PrimaryBtn onClick={handleSaveAlerts} disabled={settingsSaving}>

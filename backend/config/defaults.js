@@ -40,7 +40,6 @@ export function createDefaultAquarium(userId) {
             schedules: [],
         },
         systemConfig: {
-            unit: "Celsius",
             pollFrequency: 5,
             timezone: "Asia/Manila",
         },

@@ -1,7 +1,8 @@
 import { Router } from "express";
+import { AQUARIUM_ID } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireAuth } from "../middleware/auth.js";
-import { aquariumIdFor, toIsoString } from "../utils/firestore.js";
+import { toIsoString } from "../utils/firestore.js";
 import { isValidProfilePhotoUrl } from "../utils/profile-photo.js";
 
 const router = Router();
@@ -11,7 +12,6 @@ function userProfile(userId, user) {
     return {
         id: userId,
         userId,
-        aquariumId: aquariumIdFor(userId),
         fullName: user.fullName,
         email: user.email,
         photoUrl: user.photoUrl ?? null,
@@ -55,9 +55,29 @@ router.put("/:userId", async (req, res) => {
 
     if (Object.keys(updates).length === 0)
         return res.status(400).json({ message: "No supported profile fields were provided." });
-    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     const userRef = db.collection("users").doc(req.auth.userId);
-    await userRef.update(updates);
+    const currentUser = await userRef.get();
+    const oldUser = currentUser.data() || {};
+    const changedFields = Object.keys(updates).filter(key => updates[key] !== oldUser[key]);
+    if (changedFields.length === 0) {
+        return res.json({ updatedAt: new Date().toISOString(), message: "No profile changes detected." });
+    }
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    updates.updatedAt = timestamp;
+    const batch = db.batch();
+    batch.update(userRef, updates);
+    batch.create(db.collection("aquariums").doc(AQUARIUM_ID).collection("notifications").doc(), {
+        userid: req.auth.userId,
+        userId: req.auth.userId,
+        aquariumId: AQUARIUM_ID,
+        title: "Profile updated",
+        message: "Your profile information was updated.",
+        type: "info",
+        scope: "user",
+        isRead: false,
+        timestamp,
+    });
+    await batch.commit();
     return res.json({
         updatedAt: new Date().toISOString(),
         message: "Profile updated successfully.",

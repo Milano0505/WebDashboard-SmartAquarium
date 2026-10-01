@@ -2,11 +2,12 @@ import bcrypt from "bcrypt";
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { randomUUID } from "node:crypto";
+import { AQUARIUM_ID } from "../config/aquarium.js";
 import { createDefaultAquarium } from "../config/defaults.js";
 import { admin, db } from "../config/firebase.js";
 import { JWT_SECRET } from "../config/security.js";
 import { requireAuth } from "../middleware/auth.js";
-import { aquariumIdFor, toIsoString } from "../utils/firestore.js";
+import { toIsoString } from "../utils/firestore.js";
 import { isValidProfilePhotoUrl } from "../utils/profile-photo.js";
 
 const router = Router();
@@ -24,12 +25,58 @@ function createUserProfile(userId, user) {
     return {
         id: userId,
         userId,
-        aquariumId: aquariumIdFor(userId),
         fullName: user.fullName,
         email: user.email,
         photoUrl: user.photoUrl ?? null,
         createdAt: toIsoString(user.createdAt),
     };
+}
+
+async function joinSharedAquarium(userId) {
+    const sharedRef = db.collection("aquariums").doc(AQUARIUM_ID);
+    const userRef = db.collection("users").doc(userId);
+    await db.runTransaction(async transaction => {
+        const sharedSnapshot = await transaction.get(sharedRef);
+        transaction.update(userRef, {
+            aquariumId: admin.firestore.FieldValue.delete(),
+            aquariumIds: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        if (sharedSnapshot.exists) {
+            const aquariumUpdates = {
+                memberIds: admin.firestore.FieldValue.delete(),
+                "systemConfig.unit": admin.firestore.FieldValue.delete(),
+            };
+            const legacyUnit = sharedSnapshot.get("systemConfig.unit");
+            if (legacyUnit && !sharedSnapshot.get("tempConfig.unit")) aquariumUpdates["tempConfig.unit"] = legacyUnit;
+            transaction.update(sharedRef, aquariumUpdates);
+        } else {
+            transaction.create(sharedRef, createDefaultAquarium(userId));
+        }
+    });
+}
+
+async function migratePrivateNotifications(userId) {
+    const legacyRef = db.collection("users").doc(userId).collection("notifications");
+    const legacySnapshot = await legacyRef.get();
+    for (let offset = 0; offset < legacySnapshot.docs.length; offset += 400) {
+        const batch = db.batch();
+        legacySnapshot.docs.slice(offset, offset + 400).forEach(document => {
+            const notificationRef = db
+                .collection("aquariums")
+                .doc(AQUARIUM_ID)
+                .collection("notifications")
+                .doc(`profile-${userId}-${document.id}`);
+            batch.set(notificationRef, {
+                ...document.data(),
+                userid: userId,
+                aquariumId: AQUARIUM_ID,
+                scope: "user",
+            });
+            batch.delete(document.ref);
+        });
+        await batch.commit();
+    }
 }
 
 router.post("/register", async (req, res) => {
@@ -53,22 +100,32 @@ router.post("/register", async (req, res) => {
     if (!existing.empty) return res.status(409).json({ message: "An account with this email already exists." });
 
     const userId = randomUUID();
-    const aquariumId = aquariumIdFor(userId);
     const userRef = db.collection("users").doc(userId);
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
-
-    batch.create(userRef, {
-        fullName,
-        email,
-        password: passwordHash,
-        photoUrl,
-        createdAt: now,
-        updatedAt: now,
+    const aquariumRef = db.collection("aquariums").doc(AQUARIUM_ID);
+    await db.runTransaction(async transaction => {
+        const aquariumSnapshot = await transaction.get(aquariumRef);
+        transaction.create(userRef, {
+            fullName,
+            email,
+            password: passwordHash,
+            photoUrl,
+            createdAt: now,
+            updatedAt: now,
+        });
+        if (!aquariumSnapshot.exists) {
+            transaction.create(aquariumRef, createDefaultAquarium(userId));
+        } else {
+            const aquariumUpdates = {
+                memberIds: admin.firestore.FieldValue.delete(),
+                "systemConfig.unit": admin.firestore.FieldValue.delete(),
+            };
+            const legacyUnit = aquariumSnapshot.get("systemConfig.unit");
+            if (legacyUnit && !aquariumSnapshot.get("tempConfig.unit")) aquariumUpdates["tempConfig.unit"] = legacyUnit;
+            transaction.update(aquariumRef, aquariumUpdates);
+        }
     });
-    batch.create(db.collection("aquariums").doc(aquariumId), createDefaultAquarium(userId));
-    await batch.commit();
 
     const userProfile = createUserProfile(userId, {
         fullName,
@@ -92,6 +149,8 @@ router.post("/login", async (req, res) => {
     const passwordMatches = await bcrypt.compare(password, user.password || "");
     if (!passwordMatches) return res.status(401).json({ message: "Invalid email or password." });
 
+    await joinSharedAquarium(userDoc.id);
+    await migratePrivateNotifications(userDoc.id);
     const userProfile = createUserProfile(userDoc.id, user);
     return res.json({
         userId: userDoc.id,
@@ -118,10 +177,24 @@ router.post("/change-password", requireAuth, async (req, res) => {
         return res.status(400).json({ message: "Current password is incorrect." });
     }
 
-    await userRef.update({
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    batch.update(userRef, {
         password: await bcrypt.hash(newPassword, SALT_ROUNDS),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: timestamp,
     });
+    batch.create(db.collection("aquariums").doc(AQUARIUM_ID).collection("notifications").doc(), {
+        userid: req.auth.userId,
+        userId: req.auth.userId,
+        aquariumId: AQUARIUM_ID,
+        title: "Password updated",
+        message: "Your account password was changed.",
+        type: "info",
+        scope: "user",
+        isRead: false,
+        timestamp,
+    });
+    await batch.commit();
     return res.json({ message: "Password updated successfully." });
 });
 

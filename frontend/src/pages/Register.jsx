@@ -92,7 +92,7 @@ export default function RegisterPage() {
             }}
         >
             <div className="w-full max-w-[430px] min-h-screen md:min-h-0 flex flex-col md:rounded-3xl md:overflow-hidden md:shadow-2xl">
-                {/* Hero top — mirrors Login */}
+                {/* Registration header */}
                 <div className="flex flex-col items-center pt-10 pb-6 px-6 text-white">
                     <button
                         onClick={() => navigate("/login")}
@@ -107,7 +107,7 @@ export default function RegisterPage() {
                     <p className="text-blue-300 text-sm text-center">Create your account to get started.</p>
                 </div>
 
-                {/* Form card — mirrors Login */}
+                {/* Registration form */}
                 <div className="flex-1 bg-white rounded-t-3xl px-6 pt-8 pb-10 space-y-4 overflow-y-auto scroll-area">
                     <div className="mb-2">
                         <h2 className="text-xl font-bold text-slate-800">Create Account</h2>

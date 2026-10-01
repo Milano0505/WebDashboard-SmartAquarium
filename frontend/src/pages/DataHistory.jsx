@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { exportTelemetry, getAquarium, getTelemetry } from "../api/service";
+import { AQUARIUM_ID, exportTelemetry, getAquarium, getTelemetry } from "../api/service";
 import { ChevronLeft, ChevronRight, Download, Search } from "../components/Icons";
 import { Card, ErrorAlert, PageHeader, Spinner, StatusBadge } from "../components/ui";
-import { useAuth } from "../context/AuthContext";
 
 const PER_PAGE = 10;
 
-// ── Mini calendar helpers ──────────────────────────────────────────────────
+// Calendar helpers
 function daysInMonth(year, month) {
     return new Date(year, month + 1, 0).getDate();
 }
@@ -17,7 +16,7 @@ function dateKey(y, m, d) {
     return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-// ── Table Tab ──────────────────────────────────────────────────────────────
+// Table view
 function TableTab({ allData, aquariumId }) {
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
@@ -258,7 +257,7 @@ function TableTab({ allData, aquariumId }) {
     );
 }
 
-// ── Calendar Tab ───────────────────────────────────────────────────────────
+// Calendar view
 const MONTHS = [
     "January",
     "February",
@@ -299,7 +298,6 @@ function CalendarTab({ allData }) {
         setSelectedDate(null);
     };
     const nextMonth = () => {
-        // Don't go past current month
         if (viewYear === now.getFullYear() && viewMonth === now.getMonth()) return;
         if (viewMonth === 11) {
             setViewYear(y => y + 1);
@@ -520,15 +518,14 @@ function CalendarTab({ allData }) {
     );
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────
+// History page
 const PAGE_TABS = [
     { id: "table", label: "📋 Table" },
     { id: "calendar", label: "📅 Calendar" },
 ];
 
 export default function DataHistoryPage() {
-    const { user } = useAuth();
-    const aquariumId = user?.aquariumId;
+    const aquariumId = AQUARIUM_ID;
     const [allData, setAllData] = useState([]);
     const [timezone, setTimezone] = useState("Asia/Manila");
     const [loading, setLoading] = useState(true);
@@ -537,6 +534,8 @@ export default function DataHistoryPage() {
 
     useEffect(() => {
         let isMounted = true;
+        setLoading(true);
+        setLoadError("");
 
         const loadHistory = async () => {
             try {
@@ -559,7 +558,7 @@ export default function DataHistoryPage() {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [aquariumId]);
 
     if (loading)
         return (

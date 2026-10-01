@@ -1,4 +1,5 @@
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+export const AQUARIUM_ID = import.meta.env.VITE_AQUARIUM_ID || "aquarium-001";
 
 export const getToken = () => {
     try {
@@ -15,15 +16,10 @@ export const setToken = token => localStorage.setItem("sa_token", token);
 export const clearToken = () => localStorage.removeItem("sa_token");
 
 function getAquariumId(aquariumId) {
-    try {
-        const user = JSON.parse(localStorage.getItem("sa_user") || "null");
-        const resolvedId = aquariumId || user?.aquariumId;
-        if (resolvedId) return resolvedId;
-    } catch {
-        if (aquariumId) return aquariumId;
+    if (aquariumId && aquariumId !== AQUARIUM_ID) {
+        throw new Error("This installation is configured for one aquarium.");
     }
-
-    throw new Error("No aquarium is linked to the signed-in account.");
+    return AQUARIUM_ID;
 }
 
 function aquariumPath(aquariumId) {
@@ -63,7 +59,7 @@ async function request(path, options = {}) {
                 clearToken();
                 localStorage.removeItem("sa_user");
             } catch {
-                // Keep the API error even when browser storage is unavailable.
+                // Unauthorized response handling
             }
             if (typeof window !== "undefined") {
                 window.dispatchEvent(new Event("sa:unauthorized"));
