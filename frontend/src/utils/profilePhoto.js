@@ -2,6 +2,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 256;
 const MAX_COMPRESSED_SIZE = 180 * 1024;
 
+// Kecilkan gambar (maks. 256 px) lalu ubah jadi data URL JPEG (maks. 180 KB, batas backend)
 export function createProfilePhotoDataUrl(file) {
     if (!file?.type?.startsWith("image/")) {
         return Promise.reject(new Error("Choose a valid image file."));

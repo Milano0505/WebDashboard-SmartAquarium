@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
     AQUARIUM_ID,
@@ -6,7 +6,6 @@ import {
     getNotifications,
     getTelemetry,
     getTemperatureChart,
-    relativeTime,
     triggerFeeder,
     updateFeederConfig,
     updateLightingConfig,
@@ -21,24 +20,106 @@ import {
     LiveClock,
     ModeSelector,
     PageHeader,
+    RangeSlider,
     Spinner,
     StatusBadge,
     Toggle,
 } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
+import { formatTemp, formatTempValue, relativeTime, tempUnitSymbol } from "../utils/format";
 
-const toF = c => +((c * 9) / 5 + 32).toFixed(1);
-function fmtTemp(c, unit) {
-    if (c === null || c === undefined || !Number.isFinite(Number(c))) return "--";
-    if (unit === "Fahrenheit") return `${toF(c)}°F`;
-    return `${c}°C`;
+const TABS = [
+    { id: "overview", label: "Overview" },
+    { id: "temperature", label: "Temperature" },
+    { id: "lighting", label: "Lighting" },
+    { id: "feeder", label: "Feeder" },
+];
+
+const NOTIFICATION_COLORS = {
+    alert: { dot: "bg-red-500", bg: "bg-red-50", text: "text-red-700" },
+    info: { dot: "bg-blue-500", bg: "bg-blue-50", text: "text-blue-700" },
+    success: { dot: "bg-green-500", bg: "bg-green-50", text: "text-green-700" },
+};
+
+const EMPTY_STATE = {
+    currentTemp: null,
+    heaterStatus: "OFF",
+    ledStatus: "OFF",
+    feederStatus: "Idle",
+    lastUpdated: null,
+};
+const DEFAULT_TARGET_TEMP = 24;
+const MIN_REFRESH_SECONDS = 5;
+
+// Format jam jadwal "hh:mm AM/PM" sesuai API
+const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+const MINUTES = ["00", "15", "30", "45"];
+
+function minutesOfDay(time) {
+    const [clock, period] = time.split(" ");
+    const [hour, minute] = clock.split(":").map(Number);
+    return ((hour % 12) + (period === "PM" ? 12 : 0)) * 60 + minute;
 }
-function fmtTempVal(c, unit) {
-    if (c === null || c === undefined || !Number.isFinite(Number(c))) return "--";
-    return unit === "Fahrenheit" ? toF(c) : c;
+
+// Sama dengan server: jam selesai < jam mulai berarti melewati tengah malam
+function scheduleDuration(startTime, endTime) {
+    return Math.round((((minutesOfDay(endTime) - minutesOfDay(startTime) + 1440) % 1440) / 60) * 100) / 100;
 }
-function tempUnit(unit) {
-    return unit === "Fahrenheit" ? "°F" : "°C";
+
+const formatHours = hours => (Number.isFinite(hours) ? `${hours} hrs` : "--");
+const modeLabel = mode => (mode === "MANUAL" ? "Manual" : "Automatic");
+const toTime = value => (value ? new Date(value).getTime() : NaN);
+
+// Sama dengan server: offline jika tidak ada telemetry > 3x poll interval (min. 120 detik)
+function isDeviceOnline(lastUpdated, pollFrequency) {
+    const last = toTime(lastUpdated);
+    if (!Number.isFinite(last)) return false;
+    return Date.now() - last <= Math.max(120, 3 * (pollFrequency || 5)) * 1000;
+}
+
+// Feed Now dianggap selesai setelah ada telemetry yang lebih baru dari trigger
+function isFeedPending(lastTriggeredAt, lastUpdated) {
+    const triggered = toTime(lastTriggeredAt);
+    if (!Number.isFinite(triggered)) return false;
+    const updated = toTime(lastUpdated);
+    return !Number.isFinite(updated) || triggered > updated;
+}
+
+// ---------- Komponen bersama ----------
+
+function TimeSelect({ label, value, onChange }) {
+    const [clock, period] = value.split(" ");
+    const [hour, minute] = clock.split(":");
+    const minuteOptions = MINUTES.includes(minute) ? MINUTES : [...MINUTES, minute].sort();
+    const selectClass =
+        "flex-1 min-w-0 py-2 text-center text-sm font-semibold text-slate-800 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400";
+    const selects = [
+        ["hour", hour, HOURS, next => `${next}:${minute} ${period}`],
+        ["minute", minute, minuteOptions, next => `${hour}:${next} ${period}`],
+        ["period", period, ["AM", "PM"], next => `${hour}:${minute} ${next}`],
+    ];
+    return (
+        <div>
+            <div className="text-xs text-slate-400 mb-1">{label}</div>
+            <div className="flex items-center gap-1">
+                {selects.map(([part, current, options, build]) => (
+                    <select
+                        key={part}
+                        aria-label={`${label} ${part}`}
+                        value={current}
+                        onChange={event => onChange(build(event.target.value))}
+                        className={selectClass}
+                    >
+                        {options.map(option => (
+                            <option key={option} value={option}>
+                                {option}
+                            </option>
+                        ))}
+                    </select>
+                ))}
+            </div>
+        </div>
+    );
 }
 
 function AddTimeModal({ onAdd, onClose }) {
@@ -46,10 +127,11 @@ function AddTimeModal({ onAdd, onClose }) {
     const [minute, setMinute] = useState("00");
     const [period, setPeriod] = useState("AM");
     const overlayRef = useRef();
+    const bigSelectClass =
+        "flex-1 py-4 text-center text-2xl font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400";
 
     const handleAdd = () => {
-        const label = `${hour}:${minute} ${period}`;
-        onAdd(label);
+        onAdd(`${hour}:${minute} ${period}`);
         onClose();
     };
 
@@ -57,9 +139,7 @@ function AddTimeModal({ onAdd, onClose }) {
         <div
             ref={overlayRef}
             className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm"
-            onClick={e => {
-                if (e.target === overlayRef.current) onClose();
-            }}
+            onClick={event => event.target === overlayRef.current && onClose()}
         >
             <div className="w-full max-w-sm bg-white rounded-t-3xl md:rounded-2xl shadow-2xl px-6 pt-6 pb-8 md:mx-4">
                 <div className="flex items-center justify-between mb-5">
@@ -76,24 +156,16 @@ function AddTimeModal({ onAdd, onClose }) {
                 </div>
 
                 <div className="flex items-center justify-center gap-2 mb-6">
-                    <select
-                        value={hour}
-                        onChange={e => setHour(e.target.value)}
-                        className="flex-1 py-4 text-center text-2xl font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    >
-                        {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map(h => (
+                    <select value={hour} onChange={event => setHour(event.target.value)} className={bigSelectClass}>
+                        {HOURS.map(h => (
                             <option key={h} value={h}>
                                 {h}
                             </option>
                         ))}
                     </select>
                     <span className="text-2xl font-bold text-slate-400">:</span>
-                    <select
-                        value={minute}
-                        onChange={e => setMinute(e.target.value)}
-                        className="flex-1 py-4 text-center text-2xl font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    >
-                        {["00", "15", "30", "45"].map(m => (
+                    <select value={minute} onChange={event => setMinute(event.target.value)} className={bigSelectClass}>
+                        {MINUTES.map(m => (
                             <option key={m} value={m}>
                                 {m}
                             </option>
@@ -142,707 +214,711 @@ function AddTimeModal({ onAdd, onClose }) {
     );
 }
 
-const TABS = [
-    { id: "overview", label: "Overview" },
-    { id: "temperature", label: "Temperature" },
-    { id: "lighting", label: "Lighting" },
-    { id: "feeder", label: "Feeder" },
-];
+function DeviceBadge({ online, lastUpdated }) {
+    return (
+        <span
+            title={`Last update: ${relativeTime(lastUpdated)}`}
+            className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                online ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"
+            }`}
+        >
+            <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-green-500" : "bg-slate-400"}`} />
+            {online ? "Device online" : lastUpdated ? "Device offline" : "No device data"}
+        </span>
+    );
+}
 
-const NOTIF_COLOR = {
-    alert: { dot: "bg-red-500", bg: "bg-red-50", text: "text-red-700" },
-    info: { dot: "bg-blue-500", bg: "bg-blue-50", text: "text-blue-700" },
-    success: { dot: "bg-green-500", bg: "bg-green-50", text: "text-green-700" },
-};
-
-function ManualControl({ state, control, onOn, onOff, disabled }) {
+// Tombol Turn On / Turn Off, aktif hanya di mode Manual. Tanpa `onOff` hanya satu tombol.
+// `pending` = perintah sudah disimpan tapi belum dijalankan perangkat
+function ManualControl({ state, control, manual, busy, pending, online, onOn, onOff, onLabel = "Turn On" }) {
+    const disabled = !manual || busy;
+    const buttonClass = primary =>
+        `py-3 rounded-xl text-sm font-semibold transition-colors ${
+            disabled
+                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                : primary
+                  ? "bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700"
+                  : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100"
+        }`;
     return (
         <div>
             <div className="grid grid-cols-2 gap-2 mb-3">
                 <InfoField label="Current State" value={state} />
                 <InfoField label="Control" value={control} />
             </div>
-            {disabled && (
+            {!manual && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
                     Switch to Manual mode to control this device manually.
                 </p>
             )}
-            <div className="grid grid-cols-2 gap-2">
-                <button
-                    onClick={onOn}
-                    disabled={disabled}
-                    className={`py-3 rounded-xl text-sm font-semibold transition-colors ${
-                        disabled
-                            ? "bg-slate-100 text-slate-300 cursor-not-allowed"
-                            : "bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700"
+            {manual && pending && (
+                <p
+                    className={`text-xs rounded-lg px-3 py-2 mb-3 border ${
+                        online
+                            ? "text-blue-600 bg-blue-50 border-blue-200"
+                            : "text-amber-600 bg-amber-50 border-amber-200"
                     }`}
                 >
-                    Turn On
+                    {online
+                        ? "⏳ Waiting for the device to apply this command…"
+                        : "⚠️ Device is offline. The command will run when it reconnects."}
+                </p>
+            )}
+            <div className={`grid gap-2 ${onOff ? "grid-cols-2" : "grid-cols-1"}`}>
+                <button onClick={onOn} disabled={disabled} className={buttonClass(true)}>
+                    {onLabel}
                 </button>
-                <button
-                    onClick={onOff}
-                    disabled={disabled}
-                    className={`py-3 rounded-xl text-sm font-semibold transition-colors ${
-                        disabled
-                            ? "bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed"
-                            : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100"
-                    }`}
-                >
-                    Turn Off
-                </button>
+                {onOff && (
+                    <button onClick={onOff} disabled={disabled} className={buttonClass(false)}>
+                        Turn Off
+                    </button>
+                )}
             </div>
         </div>
     );
 }
 
-export default function DashboardPage({ onSystemChange }) {
-    const { tab = "overview" } = useParams();
+// ---------- Tab Overview ----------
+
+function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, recentNotifications }) {
     const navigate = useNavigate();
-    const { user } = useAuth();
-    const aqId = AQUARIUM_ID;
-
-    const [aquarium, setAquarium] = useState(null);
-    const [chartData, setChartData] = useState([]);
-    const [recentTelemetry, setRecentTelemetry] = useState([]);
-    const [recentNotifs, setRecentNotifs] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState("");
-    const [actionError, setActionError] = useState("");
-    const [actionSaving, setActionSaving] = useState(false);
-    const [showAddTime, setShowAddTime] = useState(false);
-
-    useEffect(() => {
-        let isMounted = true;
-        setLoading(true);
-        setLoadError("");
-
-        const loadDashboard = async () => {
-            try {
-                const [aq, chart, telemetry, notifs] = await Promise.all([
-                    getAquarium(aqId),
-                    getTemperatureChart(aqId),
-                    getTelemetry(aqId, { limit: 5 }),
-                    getNotifications(aqId, { limit: 5 }),
-                ]);
-                if (!isMounted) return;
-                setAquarium(aq);
-                setChartData(chart);
-                setRecentTelemetry(telemetry.telemetryRecords.slice(0, 5));
-                setRecentNotifs(notifs.notificationRecords.slice(0, 5));
-            } catch (error) {
-                if (isMounted) setLoadError(error instanceof Error ? error.message : "Could not load the dashboard.");
-            } finally {
-                if (isMounted) setLoading(false);
-            }
-        };
-
-        loadDashboard();
-        return () => {
-            isMounted = false;
-        };
-    }, [aqId]);
-
-    const setTab = t => navigate(`/dashboard${t === "overview" ? "" : "/" + t}`, { replace: true });
-
-    const patchAquarium = async (section, patch, apiFn) => {
-        setActionError("");
-        setActionSaving(true);
-        try {
-            await apiFn(aqId, patch);
-            setAquarium(prev => ({
-                ...prev,
-                [section]: { ...prev[section], ...patch },
-            }));
-            onSystemChange?.("Aquarium configuration updated successfully.");
-        } catch (error) {
-            setActionError(error instanceof Error ? error.message : "Could not update the aquarium setting.");
-        } finally {
-            setActionSaving(false);
-        }
-    };
-
-    const handleTriggerFeeder = async () => {
-        setActionError("");
-        setActionSaving(true);
-        try {
-            await triggerFeeder(aqId);
-            onSystemChange?.("Feeder activated successfully.");
-        } catch (error) {
-            setActionError(error instanceof Error ? error.message : "Could not trigger the feeder.");
-        } finally {
-            setActionSaving(false);
-        }
-    };
-
-    if (loading)
-        return (
-            <div className="px-4 py-6">
-                <div className="text-sm text-slate-400 mb-1">Welcome, {user?.fullName || user?.name}</div>
-                <h1 className="text-2xl font-bold text-slate-800 mb-4">Dashboard</h1>
-                <Spinner />
-            </div>
-        );
-
-    if (loadError)
-        return (
-            <div className="px-4 py-6">
-                <PageHeader title="Dashboard" />
-                <ErrorAlert message={loadError} />
-            </div>
-        );
-
-    if (!aquarium)
-        return (
-            <div className="px-4 py-6">
-                <PageHeader title="Dashboard" />
-                <Card className="text-center text-slate-500">No Data</Card>
-            </div>
-        );
-
-    const { tempConfig, lightingConfig, feederConfig, hardwareInfo } = aquarium;
-    const latestTelemetry = recentTelemetry[0];
-    const realtimeState = latestTelemetry
-        ? {
-              currentTemp: latestTelemetry.temp,
-              heaterStatus: latestTelemetry.heaterState,
-              ledStatus: latestTelemetry.ledState,
-              feederStatus: latestTelemetry.feederState,
-              lastUpdated: latestTelemetry.timestamp,
-          }
-        : {
-              currentTemp: null,
-              heaterStatus: "OFF",
-              ledStatus: "OFF",
-              feederStatus: "Idle",
-              lastUpdated: null,
-          };
-    const activeTab = TABS.find(t => t.id === tab) ? tab : "overview";
-
-    const heaterIsManual = tempConfig.mode === "MANUAL";
-    const ledIsManual = lightingConfig.mode === "MANUAL";
-    const feederIsManual = feederConfig.mode === "MANUAL";
+    const { unit } = aquarium.tempConfig;
+    const hasTemp = realtimeState.currentTemp !== null && realtimeState.currentTemp !== undefined;
+    const chartTemps = chartData.map(point => point.temp);
 
     return (
-        <div className="px-4 py-5">
-            <div className="text-xs text-slate-400 mb-0.5">Welcome, {user?.fullName || user?.name}</div>
-            <ErrorAlert message={actionError} />
-            <div className="flex items-center justify-between mb-4">
-                <h1 className="text-2xl font-bold text-slate-800">
-                    {TABS.find(t => t.id === activeTab)?.label || "Dashboard"}
-                </h1>
-                <LiveClock timezone={aquarium.systemConfig.timezone} />
-            </div>
+        <div className="space-y-4">
+            <Card>
+                <p className="text-xs font-semibold text-slate-500 mb-1">Real-time water temperature</p>
+                <div className="flex items-baseline gap-1 mb-3">
+                    <span className="text-5xl font-bold text-blue-600">
+                        {formatTempValue(realtimeState.currentTemp, unit)}
+                    </span>
+                    {hasTemp && <span className="text-xl text-blue-400 font-semibold">{tempUnitSymbol(unit)}</span>}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                    <InfoField label="Target temperature" value={formatTemp(aquarium.tempConfig.targetTemp, unit)} />
+                    <InfoField label="Last update" value={relativeTime(realtimeState.lastUpdated)} />
+                </div>
+            </Card>
 
-            {/* Dashboard tabs */}
-            <div className="flex gap-1 overflow-x-auto pb-1 mb-5 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
-                {TABS.map(t => (
-                    <button
-                        key={t.id}
-                        onClick={() => setTab(t.id)}
-                        className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-                            activeTab === t.id
-                                ? "bg-blue-500 text-white shadow-sm"
-                                : "bg-white border border-slate-200 text-slate-600 hover:border-blue-300"
-                        }`}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </div>
-
-            {/* Overview section */}
-            {activeTab === "overview" && (
-                <div className="space-y-4">
-                    {/* Temperature summary */}
-                    <Card>
-                        <p className="text-xs font-semibold text-slate-500 mb-1">Real-time water temperature</p>
-                        <div className="flex items-baseline gap-1 mb-3">
-                            <span className="text-5xl font-bold text-blue-600">
-                                {fmtTempVal(realtimeState.currentTemp, tempConfig.unit)}
-                            </span>
-                            {realtimeState.currentTemp !== null && realtimeState.currentTemp !== undefined && (
-                                <span className="text-xl text-blue-400 font-semibold">{tempUnit(tempConfig.unit)}</span>
-                            )}
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">System Status</p>
+                <div className="space-y-2.5">
+                    {[
+                        ["Heater", "🌡️", realtimeState.heaterStatus],
+                        ["Aquarium LED", "💡", realtimeState.ledStatus],
+                        ["Auto Feeder", "🐟", realtimeState.feederStatus],
+                    ].map(([label, icon, status]) => (
+                        <div
+                            key={label}
+                            className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0"
+                        >
+                            <div className="flex items-center gap-2 text-sm text-slate-700">
+                                <span>{icon}</span>
+                                {label}
+                            </div>
+                            <StatusBadge status={status} />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <InfoField
-                                label="Target temperature"
-                                value={fmtTemp(tempConfig.targetTemp, tempConfig.unit)}
-                            />
-                            <InfoField label="Last update" value={relativeTime(realtimeState.lastUpdated)} />
-                        </div>
-                    </Card>
+                    ))}
+                </div>
+            </Card>
 
-                    {/* System status */}
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">System Status</p>
-                        <div className="space-y-2.5">
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div className="flex items-baseline justify-between px-4 pt-4 pb-2">
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500">Temperature Monitor · Last 12 readings</p>
+                        <span className="text-3xl font-bold text-blue-600">
+                            {formatTempValue(realtimeState.currentTemp, unit)}{" "}
+                            {hasTemp && <span className="text-base text-blue-400">{tempUnitSymbol(unit)}</span>}
+                        </span>
+                    </div>
+                    {chartData.length > 0 && (
+                        <div className="grid grid-cols-3 gap-3 text-center">
                             {[
-                                {
-                                    label: "Heater",
-                                    icon: "🌡️",
-                                    status: realtimeState.heaterStatus,
-                                },
-                                {
-                                    label: "Aquarium LED",
-                                    icon: "💡",
-                                    status: realtimeState.ledStatus,
-                                },
-                                {
-                                    label: "Auto Feeder",
-                                    icon: "🐟",
-                                    status: realtimeState.feederStatus,
-                                },
-                            ].map(item => (
-                                <div
-                                    key={item.label}
-                                    className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0"
-                                >
-                                    <div className="flex items-center gap-2 text-sm text-slate-700">
-                                        <span>{item.icon}</span>
-                                        {item.label}
+                                ["High", Math.max(...chartTemps)],
+                                ["Low", Math.min(...chartTemps)],
+                                ["Avg", chartTemps.reduce((sum, temp) => sum + temp, 0) / chartTemps.length],
+                            ].map(([label, value]) => (
+                                <div key={label}>
+                                    <div className="text-xs font-bold text-blue-500">
+                                        {formatTemp(+value.toFixed(1), unit)}
                                     </div>
-                                    <StatusBadge status={item.status} />
+                                    <div className="text-[10px] text-slate-400">{label}</div>
                                 </div>
                             ))}
                         </div>
-                    </Card>
+                    )}
+                </div>
+                <AreaChart data={chartData} height={220} />
+            </div>
 
-                    {/* Temperature chart */}
-                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                        <div className="flex items-baseline justify-between px-4 pt-4 pb-2">
-                            <div>
-                                <p className="text-xs font-semibold text-slate-500">Temperature Monitor · Last 12h</p>
-                                <span className="text-3xl font-bold text-blue-600">
-                                    {fmtTempVal(realtimeState.currentTemp, tempConfig.unit)}{" "}
-                                    {realtimeState.currentTemp !== null && realtimeState.currentTemp !== undefined && (
-                                        <span className="text-base text-blue-400">{tempUnit(tempConfig.unit)}</span>
-                                    )}
-                                </span>
-                            </div>
-                            {chartData.length > 0 && (
-                                <div className="grid grid-cols-3 gap-3 text-center">
-                                    {[
-                                        [fmtTemp(Math.max(...chartData.map(d => d.temp)), tempConfig.unit), "High"],
-                                        [fmtTemp(Math.min(...chartData.map(d => d.temp)), tempConfig.unit), "Low"],
-                                        [
-                                            fmtTemp(
-                                                chartData.reduce((a, d) => a + d.temp, 0) / chartData.length,
-                                                tempConfig.unit,
-                                            ),
-                                            "Avg",
-                                        ],
-                                    ].map(([v, l]) => (
-                                        <div key={l}>
-                                            <div className="text-xs font-bold text-blue-500">{v}</div>
-                                            <div className="text-[10px] text-slate-400">{l}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        <AreaChart data={chartData} height={220} />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card>
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-semibold text-slate-700">Recent Data</p>
+                        <button
+                            onClick={() => navigate("/history")}
+                            className="text-xs text-blue-500 font-semibold hover:underline"
+                        >
+                            View all
+                        </button>
                     </div>
-
-                    {/* Recent data and alerts */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Card>
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-sm font-semibold text-slate-700">Recent Data</p>
-                                <button
-                                    onClick={() => navigate("/history")}
-                                    className="text-xs text-blue-500 font-semibold hover:underline"
-                                >
-                                    View all
-                                </button>
+                    <div className="space-y-2">
+                        {recentTelemetry.length === 0 && <p className="text-xs text-slate-400">No Data</p>}
+                        {recentTelemetry.map(record => (
+                            <div
+                                key={record.id}
+                                className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
+                            >
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-slate-700 truncate">{record.event}</div>
+                                    <div className="text-[10px] text-slate-400">{relativeTime(record.timestamp)}</div>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                                    <span className="text-sm font-bold text-blue-600">
+                                        {formatTemp(record.temp, unit)}
+                                    </span>
+                                    <StatusBadge status={record.heaterState} />
+                                </div>
                             </div>
-                            <div className="space-y-2">
-                                {recentTelemetry.length === 0 && <p className="text-xs text-slate-400">No Data</p>}
-                                {recentTelemetry.map(r => (
-                                    <div
-                                        key={r.id}
-                                        className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
-                                    >
-                                        <div className="min-w-0">
-                                            <div className="text-xs font-semibold text-slate-700 truncate">
-                                                {r.event}
-                                            </div>
-                                            <div className="text-[10px] text-slate-400">
-                                                {relativeTime(r.timestamp)}
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                                            <span className="text-sm font-bold text-blue-600">
-                                                {fmtTemp(r.temp, tempConfig.unit)}
+                        ))}
+                    </div>
+                </Card>
+
+                <Card>
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-semibold text-slate-700">Recent Alerts</p>
+                        <button
+                            onClick={() => navigate("/notifications")}
+                            className="text-xs text-blue-500 font-semibold hover:underline"
+                        >
+                            View all
+                        </button>
+                    </div>
+                    <div className="space-y-2">
+                        {recentNotifications.length === 0 && <p className="text-xs text-slate-400">No Data</p>}
+                        {recentNotifications.map(notification => {
+                            const colors = NOTIFICATION_COLORS[notification.type] || NOTIFICATION_COLORS.info;
+                            return (
+                                <div
+                                    key={notification.id}
+                                    className="flex items-start gap-2 py-2 border-b border-slate-50 last:border-0"
+                                >
+                                    <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${colors.dot}`} />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                            <span className="text-xs font-semibold text-slate-700 truncate">
+                                                {notification.title}
                                             </span>
-                                            <StatusBadge status={r.heaterState} />
+                                            {!notification.isRead && (
+                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
+                                            )}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">
+                                            {relativeTime(notification.timestamp)}
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        </Card>
-
-                        <Card>
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-sm font-semibold text-slate-700">Recent Alerts</p>
-                                <button
-                                    onClick={() => navigate("/notifications")}
-                                    className="text-xs text-blue-500 font-semibold hover:underline"
-                                >
-                                    View all
-                                </button>
-                            </div>
-                            <div className="space-y-2">
-                                {recentNotifs.length === 0 && <p className="text-xs text-slate-400">No Data</p>}
-                                {recentNotifs.map(n => {
-                                    const c = NOTIF_COLOR[n.type] || NOTIF_COLOR.info;
-                                    return (
-                                        <div
-                                            key={n.id}
-                                            className="flex items-start gap-2 py-2 border-b border-slate-50 last:border-0"
-                                        >
-                                            <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-1 flex-wrap">
-                                                    <span className="text-xs font-semibold text-slate-700 truncate">
-                                                        {n.title}
-                                                    </span>
-                                                    {!n.isRead && (
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-                                                    )}
-                                                </div>
-                                                <div className="text-[10px] text-slate-400">
-                                                    {relativeTime(n.timestamp)}
-                                                </div>
-                                            </div>
-                                            <span
-                                                className={`flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${c.bg} ${c.text}`}
-                                            >
-                                                {n.type}
-                                            </span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </Card>
+                                    <span
+                                        className={`flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}
+                                    >
+                                        {notification.type}
+                                    </span>
+                                </div>
+                            );
+                        })}
                     </div>
+                </Card>
+            </div>
+        </div>
+    );
+}
+
+// ---------- Tab Temperature ----------
+
+function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving }) {
+    const { tempConfig, hardwareInfo } = aquarium;
+    const isManual = tempConfig.mode === "MANUAL";
+    // Draft lokal agar auto-refresh tidak menimpa slider yang sedang digeser
+    const [targetDraft, setTargetDraft] = useState(null);
+    const targetTemp = targetDraft ?? tempConfig.targetTemp;
+    const saveTemperature = patch => patchAquarium("tempConfig", patch, updateTemperatureConfig);
+    const saveTarget = async () => {
+        if (await saveTemperature({ targetTemp })) setTargetDraft(null);
+    };
+
+    return (
+        <div className="space-y-4">
+            <Card>
+                <p className="text-xs font-semibold text-slate-500 mb-1">Live Water Temperature</p>
+                <div className="text-4xl font-bold text-blue-600 mb-3">
+                    {formatTemp(realtimeState.currentTemp, tempConfig.unit)}
                 </div>
-            )}
-
-            {/* Temperature section */}
-            {activeTab === "temperature" && (
-                <div className="space-y-4">
-                    <Card>
-                        <p className="text-xs font-semibold text-slate-500 mb-1">Live Water Temperature</p>
-                        <div className="flex items-baseline gap-1 mb-3">
-                            <span className="text-4xl font-bold text-blue-600">
-                                {fmtTemp(realtimeState.currentTemp, tempConfig.unit)}
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
-                            <InfoField label="Sensor" value={hardwareInfo.tempSensor} />
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm font-semibold text-slate-500">Heater Status</p>
-                            <StatusBadge status={realtimeState.heaterStatus} />
-                        </div>
-                        <div
-                            className={`text-3xl font-bold mb-3 ${
-                                realtimeState.heaterStatus === "ON" ? "text-green-500" : "text-slate-300"
-                            }`}
-                        >
-                            {realtimeState.heaterStatus}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <InfoField label="Mode" value={tempConfig.mode === "MANUAL" ? "Manual" : "Automatic"} />
-                            <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Target Temperature</p>
-                        <div className="flex justify-between text-xs text-slate-500 mb-1">
-                            <span>Target</span>
-                            <span className="font-bold text-slate-700">
-                                {fmtTemp(tempConfig.targetTemp, tempConfig.unit)}
-                            </span>
-                        </div>
-                        <input
-                            type="range"
-                            min="18"
-                            max="30"
-                            step="0.5"
-                            value={Number.isFinite(tempConfig.targetTemp) ? tempConfig.targetTemp : 18}
-                            disabled={!Number.isFinite(tempConfig.targetTemp)}
-                            onChange={e =>
-                                setAquarium(prev => ({
-                                    ...prev,
-                                    tempConfig: {
-                                        ...prev.tempConfig,
-                                        targetTemp: +e.target.value,
-                                    },
-                                }))
-                            }
-                            className="w-full mb-1"
-                            style={{
-                                background: Number.isFinite(tempConfig.targetTemp)
-                                    ? `linear-gradient(to right, #3b7cf4 ${((tempConfig.targetTemp - 18) / 12) * 100}%, #e2e8f0 ${((tempConfig.targetTemp - 18) / 12) * 100}%)`
-                                    : undefined,
-                            }}
-                        />
-                        <div className="flex justify-between text-xs text-slate-400 mb-4">
-                            <span>{fmtTemp(18, tempConfig.unit)}</span>
-                            <span>{fmtTemp(30, tempConfig.unit)}</span>
-                        </div>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() =>
-                                    patchAquarium(
-                                        "tempConfig",
-                                        { targetTemp: tempConfig.targetTemp },
-                                        updateTemperatureConfig,
-                                    )
-                                }
-                                className="flex-1 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors"
-                                disabled={!Number.isFinite(tempConfig.targetTemp) || actionSaving}
-                            >
-                                Save
-                            </button>
-                            <button
-                                onClick={() =>
-                                    setAquarium(prev => ({
-                                        ...prev,
-                                        tempConfig: { ...prev.tempConfig, targetTemp: 24 },
-                                    }))
-                                }
-                                className="px-5 py-3 bg-slate-100 text-slate-600 text-sm font-semibold rounded-xl hover:bg-slate-200 transition-colors"
-                            >
-                                Reset
-                            </button>
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Heater Mode</p>
-                        <ModeSelector
-                            mode={tempConfig.mode.toLowerCase()}
-                            onMode={m =>
-                                patchAquarium("tempConfig", { mode: m.toUpperCase() }, updateTemperatureConfig)
-                            }
-                        />
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                        <ManualControl
-                            state={realtimeState.heaterStatus === "ON" ? "Running" : "Idle"}
-                            control={heaterIsManual ? "Manual" : "Automatic"}
-                            disabled={!heaterIsManual}
-                            onOn={() =>
-                                patchAquarium("tempConfig", { manualControlState: "ON" }, updateTemperatureConfig)
-                            }
-                            onOff={() =>
-                                patchAquarium("tempConfig", { manualControlState: "OFF" }, updateTemperatureConfig)
-                            }
-                        />
-                    </Card>
+                <div className="grid grid-cols-2 gap-2">
+                    <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
+                    <InfoField label="Sensor" value={hardwareInfo?.tempSensor} />
                 </div>
-            )}
+            </Card>
 
-            {/* Lighting section */}
-            {activeTab === "lighting" && (
-                <div className="space-y-4">
-                    <Card>
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-xs font-semibold text-slate-500">Lighting Status</p>
-                            <StatusBadge status={realtimeState.ledStatus} />
-                        </div>
-                        <div
-                            className={`flex items-center gap-2 text-2xl font-bold mb-3 ${
-                                realtimeState.ledStatus === "ON" ? "text-blue-500" : "text-slate-300"
-                            }`}
-                        >
-                            ☀️ {realtimeState.ledStatus}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <InfoField
-                                label="Avg. Hours ON"
-                                value={
-                                    Number.isFinite(lightingConfig.avgHoursOn)
-                                        ? `${lightingConfig.avgHoursOn} hrs`
-                                        : "--"
-                                }
-                            />
-                            <InfoField
-                                label="Avg. Hours OFF"
-                                value={
-                                    Number.isFinite(lightingConfig.avgHoursOff)
-                                        ? `${lightingConfig.avgHoursOff} hrs`
-                                        : "--"
-                                }
-                            />
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Schedule</p>
-                        <div className="flex items-center gap-2 text-blue-500 font-bold mb-3">
-                            ☀️ {lightingConfig.schedule.isActive ? "Active" : "Inactive"}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <InfoField label="Start Time" value={lightingConfig.schedule.startTime} />
-                            <InfoField label="End Time" value={lightingConfig.schedule.endTime} />
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Schedule Summary</p>
-                        <div className="grid grid-cols-3 gap-2 mb-2">
-                            <InfoField label="Start" value={lightingConfig.schedule.startTime} />
-                            <InfoField label="End" value={lightingConfig.schedule.endTime} />
-                            <InfoField
-                                label="Duration"
-                                value={
-                                    Number.isFinite(lightingConfig.schedule.durationHours)
-                                        ? `${lightingConfig.schedule.durationHours} hrs`
-                                        : "--"
-                                }
-                            />
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                            <InfoField label="Mode" value={lightingConfig.mode === "MANUAL" ? "Manual" : "Automatic"} />
-                            <InfoField label="State" value={realtimeState.ledStatus} />
-                            <InfoField label="Schedule" value={lightingConfig.schedule.isActive ? "Active" : "Off"} />
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">LED Mode</p>
-                        <ModeSelector
-                            mode={lightingConfig.mode.toLowerCase()}
-                            onMode={m =>
-                                patchAquarium("lightingConfig", { mode: m.toUpperCase() }, updateLightingConfig)
-                            }
-                        />
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                        <ManualControl
-                            state={realtimeState.ledStatus === "ON" ? "Running" : "Idle"}
-                            control={ledIsManual ? "Manual" : "Automatic"}
-                            disabled={!ledIsManual}
-                            onOn={() =>
-                                patchAquarium("lightingConfig", { manualControlState: "ON" }, updateLightingConfig)
-                            }
-                            onOff={() =>
-                                patchAquarium("lightingConfig", { manualControlState: "OFF" }, updateLightingConfig)
-                            }
-                        />
-                    </Card>
+            <Card>
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-slate-500">Heater Status</p>
+                    <StatusBadge status={realtimeState.heaterStatus} />
                 </div>
-            )}
+                <div
+                    className={`text-3xl font-bold mb-3 ${
+                        realtimeState.heaterStatus === "ON" ? "text-green-500" : "text-slate-300"
+                    }`}
+                >
+                    {realtimeState.heaterStatus}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                    <InfoField label="Mode" value={modeLabel(tempConfig.mode)} />
+                    <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
+                </div>
+            </Card>
 
-            {/* Feeding schedule modal */}
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Target Temperature</p>
+                <RangeSlider
+                    label="Target"
+                    valueLabel={formatTemp(targetTemp, tempConfig.unit)}
+                    value={targetTemp}
+                    min={18}
+                    max={30}
+                    step={0.5}
+                    minLabel={formatTemp(18, tempConfig.unit)}
+                    maxLabel={formatTemp(30, tempConfig.unit)}
+                    disabled={!Number.isFinite(targetTemp)}
+                    onChange={setTargetDraft}
+                />
+                <div className="flex gap-2 mt-4">
+                    <button
+                        onClick={saveTarget}
+                        disabled={!Number.isFinite(targetTemp) || targetTemp === tempConfig.targetTemp || saving}
+                        className="flex-1 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-60"
+                    >
+                        Save
+                    </button>
+                    <button
+                        onClick={() => setTargetDraft(DEFAULT_TARGET_TEMP)}
+                        className="px-5 py-3 bg-slate-100 text-slate-600 text-sm font-semibold rounded-xl hover:bg-slate-200 transition-colors"
+                    >
+                        Reset
+                    </button>
+                </div>
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Heater Mode</p>
+                <ModeSelector
+                    mode={tempConfig.mode.toLowerCase()}
+                    onMode={mode => saveTemperature({ mode: mode.toUpperCase() })}
+                />
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
+                <ManualControl
+                    state={realtimeState.heaterStatus === "ON" ? "Running" : "Idle"}
+                    control={modeLabel(tempConfig.mode)}
+                    manual={isManual}
+                    busy={saving}
+                    pending={tempConfig.manualControlState !== realtimeState.heaterStatus}
+                    online={deviceOnline}
+                    onOn={() => saveTemperature({ manualControlState: "ON" })}
+                    onOff={() => saveTemperature({ manualControlState: "OFF" })}
+                />
+            </Card>
+        </div>
+    );
+}
+
+// ---------- Tab Lighting ----------
+
+function LightingScheduleCard({ schedule, disabled, onSave }) {
+    const [draft, setDraft] = useState({
+        startTime: schedule.startTime || "08:00 AM",
+        endTime: schedule.endTime || "10:00 PM",
+        isActive: Boolean(schedule.isActive),
+    });
+    const sameTime = draft.startTime === draft.endTime;
+    const changed =
+        draft.startTime !== schedule.startTime ||
+        draft.endTime !== schedule.endTime ||
+        draft.isActive !== Boolean(schedule.isActive);
+
+    return (
+        <Card>
+            <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-slate-700">Schedule</p>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-500">
+                        {draft.isActive ? "Active" : "Inactive"}
+                    </span>
+                    <Toggle
+                        checked={draft.isActive}
+                        label="Lighting schedule active"
+                        onChange={isActive => setDraft(current => ({ ...current, isActive }))}
+                    />
+                </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <TimeSelect
+                    label="Start Time"
+                    value={draft.startTime}
+                    onChange={startTime => setDraft(current => ({ ...current, startTime }))}
+                />
+                <TimeSelect
+                    label="End Time"
+                    value={draft.endTime}
+                    onChange={endTime => setDraft(current => ({ ...current, endTime }))}
+                />
+            </div>
+            <p className={`text-xs mb-3 ${sameTime ? "text-red-500" : "text-slate-400"}`}>
+                {sameTime
+                    ? "Start and end time must differ."
+                    : `The LED stays on for ${scheduleDuration(draft.startTime, draft.endTime)} hrs in Automatic mode.`}
+            </p>
+            <button
+                onClick={() => onSave({ ...draft, durationHours: scheduleDuration(draft.startTime, draft.endTime) })}
+                disabled={disabled || sameTime || !changed}
+                className="w-full py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+                Save Schedule
+            </button>
+        </Card>
+    );
+}
+
+function LightingTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving }) {
+    const { lightingConfig } = aquarium;
+    const { schedule } = lightingConfig;
+    const saveLighting = patch => patchAquarium("lightingConfig", patch, updateLightingConfig);
+
+    return (
+        <div className="space-y-4">
+            <Card>
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-slate-500">Lighting Status</p>
+                    <StatusBadge status={realtimeState.ledStatus} />
+                </div>
+                <div
+                    className={`flex items-center gap-2 text-2xl font-bold mb-3 ${
+                        realtimeState.ledStatus === "ON" ? "text-blue-500" : "text-slate-300"
+                    }`}
+                >
+                    ☀️ {realtimeState.ledStatus}
+                </div>
+                {/* Dihitung server dari telemetry 7 hari terakhir */}
+                <div className="grid grid-cols-2 gap-2">
+                    <InfoField label="Avg. Hours ON" value={formatHours(lightingConfig.avgHoursOn)} />
+                    <InfoField label="Avg. Hours OFF" value={formatHours(lightingConfig.avgHoursOff)} />
+                </div>
+            </Card>
+
+            {/* key: form di-reset hanya jika jadwal di server berubah */}
+            <LightingScheduleCard
+                key={`${schedule.startTime}-${schedule.endTime}-${schedule.isActive}`}
+                schedule={schedule}
+                disabled={saving}
+                onSave={nextSchedule => saveLighting({ schedule: nextSchedule })}
+            />
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Schedule Summary</p>
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                    <InfoField label="Start" value={schedule.startTime} />
+                    <InfoField label="End" value={schedule.endTime} />
+                    <InfoField label="Duration" value={formatHours(schedule.durationHours)} />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                    <InfoField label="Mode" value={modeLabel(lightingConfig.mode)} />
+                    <InfoField label="State" value={realtimeState.ledStatus} />
+                    <InfoField label="Schedule" value={schedule.isActive ? "Active" : "Off"} />
+                </div>
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">LED Mode</p>
+                <ModeSelector
+                    mode={lightingConfig.mode.toLowerCase()}
+                    onMode={mode => saveLighting({ mode: mode.toUpperCase() })}
+                />
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
+                <ManualControl
+                    state={realtimeState.ledStatus === "ON" ? "Running" : "Idle"}
+                    control={modeLabel(lightingConfig.mode)}
+                    manual={lightingConfig.mode === "MANUAL"}
+                    busy={saving}
+                    pending={lightingConfig.manualControlState !== realtimeState.ledStatus}
+                    online={deviceOnline}
+                    onOn={() => saveLighting({ manualControlState: "ON" })}
+                    onOff={() => saveLighting({ manualControlState: "OFF" })}
+                />
+            </Card>
+        </div>
+    );
+}
+
+// ---------- Tab Feeder ----------
+
+function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving, onFeedNow }) {
+    const { feederConfig } = aquarium;
+    const feedPending = isFeedPending(feederConfig.lastTriggeredAt, realtimeState.lastUpdated);
+    const [showAddTime, setShowAddTime] = useState(false);
+    const saveSchedules = schedules => patchAquarium("feederConfig", { schedules }, updateFeederConfig);
+
+    return (
+        <div className="space-y-4">
             {showAddTime && (
                 <AddTimeModal
-                    onAdd={t => {
-                        const newSchedules = [...feederConfig.schedules, { time: t, isActive: true }];
-                        patchAquarium("feederConfig", { schedules: newSchedules }, updateFeederConfig);
-                    }}
+                    onAdd={time => saveSchedules([...feederConfig.schedules, { time, isActive: true }])}
                     onClose={() => setShowAddTime(false)}
                 />
             )}
 
-            {/* Feeder section */}
-            {activeTab === "feeder" && (
-                <div className="space-y-4">
-                    <Card>
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm font-semibold text-slate-700">Feeder Status</p>
-                            <StatusBadge status={realtimeState.feederStatus} />
-                        </div>
-                        <div
-                            className={`text-2xl font-bold mb-1 ${
-                                realtimeState.feederStatus === "Active" ? "text-green-500" : "text-slate-300"
-                            }`}
-                        >
-                            🐟 {realtimeState.feederStatus}
-                        </div>
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Feeder Mode</p>
-                        <ModeSelector
-                            mode={feederConfig.mode.toLowerCase()}
-                            onMode={m => patchAquarium("feederConfig", { mode: m.toUpperCase() }, updateFeederConfig)}
-                        />
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                        <ManualControl
-                            state={realtimeState.feederStatus}
-                            control={feederIsManual ? "Manual" : "Automatic"}
-                            disabled={!feederIsManual || actionSaving}
-                            onOn={handleTriggerFeeder}
-                            onOff={() => {}}
-                        />
-                    </Card>
-
-                    <Card>
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Feeding Schedule</p>
-                        <div className="space-y-3">
-                            {feederConfig.schedules.map((s, i) => (
-                                <div
-                                    key={i}
-                                    className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
-                                >
-                                    <span className="text-sm text-slate-700 font-medium">{s.time}</span>
-                                    <div className="flex items-center gap-3">
-                                        <Toggle
-                                            checked={s.isActive}
-                                            onChange={() => {
-                                                const updated = feederConfig.schedules.map((sc, j) =>
-                                                    j === i ? { ...sc, isActive: !sc.isActive } : sc,
-                                                );
-                                                patchAquarium(
-                                                    "feederConfig",
-                                                    { schedules: updated },
-                                                    updateFeederConfig,
-                                                );
-                                            }}
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                const updated = feederConfig.schedules.filter((_, j) => j !== i);
-                                                patchAquarium(
-                                                    "feederConfig",
-                                                    { schedules: updated },
-                                                    updateFeederConfig,
-                                                );
-                                            }}
-                                            className="text-slate-300 hover:text-red-400 transition-colors p-1"
-                                        >
-                                            <Trash />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                            <button
-                                onClick={() => setShowAddTime(true)}
-                                className="flex items-center gap-2 text-blue-500 text-sm font-semibold hover:text-blue-600 transition-colors pt-1"
-                            >
-                                <Plus /> Add feeding time
-                            </button>
-                        </div>
-                    </Card>
+            <Card>
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-slate-700">Feeder Status</p>
+                    <StatusBadge status={realtimeState.feederStatus} />
                 </div>
+                <div
+                    className={`text-2xl font-bold mb-1 ${
+                        realtimeState.feederStatus === "Active" ? "text-green-500" : "text-slate-300"
+                    }`}
+                >
+                    🐟 {realtimeState.feederStatus}
+                </div>
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Feeder Mode</p>
+                <ModeSelector
+                    mode={feederConfig.mode.toLowerCase()}
+                    onMode={mode => patchAquarium("feederConfig", { mode: mode.toUpperCase() }, updateFeederConfig)}
+                />
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
+                <ManualControl
+                    state={realtimeState.feederStatus}
+                    control={modeLabel(feederConfig.mode)}
+                    manual={feederConfig.mode === "MANUAL"}
+                    busy={saving || feedPending}
+                    pending={feedPending}
+                    online={deviceOnline}
+                    onLabel="Feed Now"
+                    onOn={onFeedNow}
+                />
+            </Card>
+
+            <Card>
+                <p className="text-sm font-semibold text-slate-700 mb-3">Feeding Schedule</p>
+                <div className="space-y-3">
+                    {feederConfig.schedules.map((entry, index) => (
+                        <div
+                            key={entry.time}
+                            className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
+                        >
+                            <span className="text-sm text-slate-700 font-medium">{entry.time}</span>
+                            <div className="flex items-center gap-3">
+                                <Toggle
+                                    checked={entry.isActive}
+                                    label={`Feeding at ${entry.time}`}
+                                    onChange={() =>
+                                        saveSchedules(
+                                            feederConfig.schedules.map((item, i) =>
+                                                i === index ? { ...item, isActive: !item.isActive } : item,
+                                            ),
+                                        )
+                                    }
+                                />
+                                <button
+                                    onClick={() => saveSchedules(feederConfig.schedules.filter((_, i) => i !== index))}
+                                    aria-label={`Delete feeding time ${entry.time}`}
+                                    className="text-slate-300 hover:text-red-400 transition-colors p-1"
+                                >
+                                    <Trash />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    <button
+                        onClick={() => setShowAddTime(true)}
+                        className="flex items-center gap-2 text-blue-500 text-sm font-semibold hover:text-blue-600 transition-colors pt-1"
+                    >
+                        <Plus /> Add feeding time
+                    </button>
+                </div>
+            </Card>
+        </div>
+    );
+}
+
+// ---------- Halaman ----------
+
+export default function DashboardPage({ onSystemChange }) {
+    const { tab = "overview" } = useParams();
+    const navigate = useNavigate();
+    const { user } = useAuth();
+
+    const [aquarium, setAquarium] = useState(null);
+    const [chartData, setChartData] = useState([]);
+    const [recentTelemetry, setRecentTelemetry] = useState([]);
+    const [recentNotifications, setRecentNotifications] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
+    const [actionError, setActionError] = useState("");
+    const [saving, setSaving] = useState(false);
+    const isMounted = useRef(true);
+
+    useEffect(() => {
+        isMounted.current = true;
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
+
+    // Ambil config, status perangkat, grafik, dan data terbaru sekaligus
+    const refresh = useCallback(async () => {
+        const [aquariumData, chart, telemetry, notifications] = await Promise.all([
+            getAquarium(AQUARIUM_ID),
+            getTemperatureChart(AQUARIUM_ID),
+            getTelemetry(AQUARIUM_ID, { limit: 5 }),
+            getNotifications(AQUARIUM_ID, { limit: 5 }),
+        ]);
+        if (!isMounted.current) return;
+        setAquarium(aquariumData);
+        setChartData(chart);
+        setRecentTelemetry(telemetry.telemetryRecords.slice(0, 5));
+        setRecentNotifications(notifications.notificationRecords.slice(0, 5));
+    }, []);
+
+    useEffect(() => {
+        refresh()
+            .catch(error => isMounted.current && setLoadError(error.message || "Could not load the dashboard."))
+            .finally(() => isMounted.current && setLoading(false));
+    }, [refresh]);
+
+    // Auto-refresh mengikuti poll interval perangkat (min. 5 detik), dijeda saat tab browser tidak aktif
+    const pollFrequency = aquarium?.systemConfig?.pollFrequency;
+    useEffect(() => {
+        if (!pollFrequency) return undefined;
+        const intervalId = window.setInterval(
+            () => {
+                if (document.visibilityState !== "visible") return;
+                refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
+            },
+            Math.max(MIN_REFRESH_SECONDS, pollFrequency) * 1000,
+        );
+        return () => window.clearInterval(intervalId);
+    }, [pollFrequency, refresh]);
+
+    // Jalankan aksi API, tampilkan toast, lalu muat ulang data. Mengembalikan true jika berhasil
+    const runAction = async (action, successMessage, failureMessage) => {
+        setActionError("");
+        setSaving(true);
+        try {
+            await action();
+            onSystemChange?.(successMessage);
+            await refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
+            return true;
+        } catch (error) {
+            setActionError(error.message || failureMessage);
+            return false;
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Simpan config; state lokal langsung disamakan sebelum data dimuat ulang
+    const patchAquarium = (section, patch, apiCall) =>
+        runAction(
+            async () => {
+                await apiCall(AQUARIUM_ID, patch);
+                setAquarium(current => ({ ...current, [section]: { ...current[section], ...patch } }));
+            },
+            "Aquarium configuration updated successfully.",
+            "Could not update the aquarium setting.",
+        );
+
+    const handleFeedNow = () =>
+        runAction(
+            () => triggerFeeder(AQUARIUM_ID),
+            "Feed command sent to the device.",
+            "Could not trigger the feeder.",
+        );
+
+    if (loading || loadError || !aquarium) {
+        return (
+            <div className="px-4 py-6">
+                <PageHeader title="Dashboard" subtitle={user?.fullName && `Welcome, ${user.fullName}`} />
+                {loading ? (
+                    <Spinner />
+                ) : loadError ? (
+                    <ErrorAlert message={loadError} />
+                ) : (
+                    <Card className="text-center text-slate-500">No Data</Card>
+                )}
+            </div>
+        );
+    }
+
+    // Status aktual perangkat; hanya diisi telemetry ESP32
+    const realtimeState = { ...EMPTY_STATE, ...aquarium.realtimeState };
+    const deviceOnline = isDeviceOnline(realtimeState.lastUpdated, pollFrequency);
+    const activeTab = TABS.some(item => item.id === tab) ? tab : "overview";
+    const tabProps = { aquarium, realtimeState, deviceOnline, patchAquarium, saving };
+
+    return (
+        <div className="px-4 py-5">
+            <div className="text-xs text-slate-400 mb-0.5">Welcome, {user?.fullName}</div>
+            <ErrorAlert message={actionError} />
+            <div className="flex items-center justify-between gap-3 mb-4">
+                <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-2xl font-bold text-slate-800">
+                        {TABS.find(item => item.id === activeTab).label}
+                    </h1>
+                    <DeviceBadge online={deviceOnline} lastUpdated={realtimeState.lastUpdated} />
+                </div>
+                <LiveClock timezone={aquarium.systemConfig.timezone} />
+            </div>
+
+            <div className="flex gap-1 overflow-x-auto pb-1 mb-5 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
+                {TABS.map(item => (
+                    <button
+                        key={item.id}
+                        onClick={() =>
+                            navigate(item.id === "overview" ? "/dashboard" : `/dashboard/${item.id}`, { replace: true })
+                        }
+                        className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
+                            activeTab === item.id
+                                ? "bg-blue-500 text-white shadow-sm"
+                                : "bg-white border border-slate-200 text-slate-600 hover:border-blue-300"
+                        }`}
+                    >
+                        {item.label}
+                    </button>
+                ))}
+            </div>
+
+            {activeTab === "overview" && (
+                <OverviewTab
+                    aquarium={aquarium}
+                    realtimeState={realtimeState}
+                    chartData={chartData}
+                    recentTelemetry={recentTelemetry}
+                    recentNotifications={recentNotifications}
+                />
             )}
+            {activeTab === "temperature" && <TemperatureTab {...tabProps} />}
+            {activeTab === "lighting" && <LightingTab {...tabProps} />}
+            {activeTab === "feeder" && <FeederTab {...tabProps} onFeedNow={handleFeedNow} />}
         </div>
     );
 }

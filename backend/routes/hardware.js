@@ -1,84 +1,119 @@
 import { Router } from "express";
-import { AQUARIUM_ID } from "../config/aquarium.js";
+import { AQUARIUM_ID, findAquarium } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireDeviceKey } from "../middleware/auth.js";
 import { serializeFirestore } from "../utils/firestore.js";
+import { notificationsRef, sharedNotification } from "../utils/notifications.js";
 
 const router = Router();
 router.use(requireDeviceKey);
 
-router.post("/:aquariumId/telemetry", async (req, res) => {
-    if (req.params.aquariumId !== AQUARIUM_ID) return res.status(404).json({ message: "Aquarium was not found." });
-    const { currentTemp, heaterStatus, ledStatus, feederStatus } = req.body;
-    const validStatus = (value, allowed) => allowed.includes(value);
+const { FieldValue } = admin.firestore;
+const NOT_FOUND = { message: "Aquarium was not found." };
+const LIGHTING_USAGE_DAYS = 7;
 
+// ---------- Fungsi bantu ----------
+
+// Tanggal YYYY-MM-DD sesuai timezone akuarium (fallback UTC)
+function dayKey(date, timezone) {
+    try {
+        return new Intl.DateTimeFormat("en-CA", {
+            timeZone: timezone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(date);
+    } catch {
+        return date.toISOString().slice(0, 10);
+    }
+}
+
+const isOutOfRange = (temp, min, max) => (Number.isFinite(min) && temp < min) || (Number.isFinite(max) && temp > max);
+
+// Tambahkan durasi sejak telemetry sebelumnya ke status LED sebelumnya, simpan 7 hari terakhir,
+// lalu hitung rata-rata jam ON/OFF per hari.
+// Jeda > 3x poll interval (min. 120 detik) dianggap offline dan tidak dihitung
+function lightingUsageUpdate(aquarium, now) {
+    const previousLed = aquarium.realtimeState?.ledStatus;
+    const lastUpdated = aquarium.realtimeState?.lastUpdated?.toDate?.();
+    const pollFrequency = aquarium.systemConfig?.pollFrequency;
+    const maxGapSeconds = Math.max(120, (Number.isFinite(pollFrequency) ? pollFrequency : 5) * 3);
+    const elapsedSeconds = lastUpdated ? (now.getTime() - lastUpdated.getTime()) / 1000 : 0;
+    if (!["ON", "OFF"].includes(previousLed) || elapsedSeconds <= 0 || elapsedSeconds > maxGapSeconds) return null;
+
+    const usage = { ...aquarium.lightingUsage };
+    const key = dayKey(now, aquarium.systemConfig?.timezone);
+    const today = { onSeconds: 0, offSeconds: 0, ...usage[key] };
+    today[previousLed === "ON" ? "onSeconds" : "offSeconds"] += Math.round(elapsedSeconds * 10) / 10;
+    usage[key] = today;
+
+    const keptDays = Object.keys(usage).sort().slice(-LIGHTING_USAGE_DAYS);
+    const lightingUsage = Object.fromEntries(keptDays.map(day => [day, usage[day]]));
+    const onSeconds = keptDays.reduce((total, day) => total + lightingUsage[day].onSeconds, 0);
+    const offSeconds = keptDays.reduce((total, day) => total + lightingUsage[day].offSeconds, 0);
+    const avgHoursOn = Math.round(((24 * onSeconds) / (onSeconds + offSeconds)) * 10) / 10;
+
+    return {
+        lightingUsage,
+        "lightingConfig.avgHoursOn": avgHoursOn,
+        "lightingConfig.avgHoursOff": Math.round((24 - avgHoursOn) * 10) / 10,
+    };
+}
+
+// ---------- Route ----------
+
+router.post("/:aquariumId/telemetry", async (req, res) => {
+    const { currentTemp, heaterStatus, ledStatus, feederStatus } = req.body;
     if (!Number.isFinite(currentTemp) || currentTemp < -10 || currentTemp > 60) {
-        return res.status(400).json({
-            message: "currentTemp must be a finite Celsius value between -10 and 60.",
-        });
+        return res.status(400).json({ message: "currentTemp must be a finite Celsius value between -10 and 60." });
     }
     if (
-        !validStatus(heaterStatus, ["ON", "OFF"]) ||
-        !validStatus(ledStatus, ["ON", "OFF"]) ||
-        !validStatus(feederStatus, ["Idle", "Active"])
+        !["ON", "OFF"].includes(heaterStatus) ||
+        !["ON", "OFF"].includes(ledStatus) ||
+        !["Idle", "Active"].includes(feederStatus)
     ) {
         return res.status(400).json({ message: "Device statuses are invalid." });
     }
 
-    const aquariumRef = db.collection("aquariums").doc(req.params.aquariumId);
-    const aquariumSnapshot = await aquariumRef.get();
-    if (!aquariumSnapshot.exists) return res.status(404).json({ message: "Aquarium was not found." });
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
 
-    const aquarium = aquariumSnapshot.data();
     const now = new Date();
-    const event = typeof req.body.event === "string" ? req.body.event.slice(0, 160) : "Telemetry update";
-    const telemetryRef = aquariumRef.collection("telemetry_history").doc();
     const batch = db.batch();
-    batch.update(aquariumRef, {
+    batch.update(aquarium.reference, {
         "realtimeState.currentTemp": currentTemp,
         "realtimeState.heaterStatus": heaterStatus,
         "realtimeState.ledStatus": ledStatus,
         "realtimeState.feederStatus": feederStatus,
-        "realtimeState.lastUpdated": admin.firestore.FieldValue.serverTimestamp(),
+        "realtimeState.lastUpdated": FieldValue.serverTimestamp(),
+        ...lightingUsageUpdate(aquarium.data, now),
     });
-    batch.set(telemetryRef, {
+    batch.set(aquarium.reference.collection("telemetry_history").doc(), {
         userId: null,
         aquariumId: AQUARIUM_ID,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
         temp: currentTemp,
         heaterState: heaterStatus,
         ledState: ledStatus,
         feederState: feederStatus,
-        event,
+        event: typeof req.body.event === "string" ? req.body.event.slice(0, 160) : "Telemetry update",
     });
 
-    const minTemp = aquarium.tempConfig?.minTempThreshold;
-    const maxTemp = aquarium.tempConfig?.maxTempThreshold;
-    const previousTemp = aquarium.realtimeState?.currentTemp;
-    const outOfRange =
-        (Number.isFinite(minTemp) && currentTemp < minTemp) || (Number.isFinite(maxTemp) && currentTemp > maxTemp);
-    const previouslyOutOfRange =
-        Number.isFinite(previousTemp) &&
-        ((Number.isFinite(minTemp) && previousTemp < minTemp) || (Number.isFinite(maxTemp) && previousTemp > maxTemp));
-    if (outOfRange && !previouslyOutOfRange) {
-        const direction = currentTemp < minTemp ? "below" : "above";
-        const threshold = currentTemp < minTemp ? minTemp : maxTemp;
-        const notificationRef = aquariumRef.collection("notifications").doc();
-        const message = `Water temperature is ${direction} the configured threshold of ${threshold}°C (${currentTemp}°C).`;
-        batch.set(notificationRef, {
-            userid: null,
-            userId: null,
-            aquariumId: AQUARIUM_ID,
-            actorName: "Aquarium hardware",
-            scope: "aquarium",
-            title: "Temperature Alert",
-            message,
-            type: "alert",
-            isRead: false,
-            readBy: [],
-            dismissedBy: [],
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        });
+    // Alert hanya saat suhu baru keluar dari batas, bukan di setiap pembacaan
+    const { minTempThreshold: min, maxTempThreshold: max } = aquarium.data.tempConfig || {};
+    const previousTemp = aquarium.data.realtimeState?.currentTemp;
+    const wasOutOfRange = Number.isFinite(previousTemp) && isOutOfRange(previousTemp, min, max);
+    if (isOutOfRange(currentTemp, min, max) && !wasOutOfRange) {
+        const isLow = currentTemp < min;
+        batch.set(
+            notificationsRef().doc(),
+            sharedNotification({
+                actorName: "Aquarium hardware",
+                title: "Temperature Alert",
+                message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
+                type: "alert",
+            }),
+        );
     }
 
     await batch.commit();
@@ -86,18 +121,15 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
 });
 
 router.get("/:aquariumId/config", async (req, res) => {
-    if (req.params.aquariumId !== AQUARIUM_ID) return res.status(404).json({ message: "Aquarium was not found." });
-    const aquarium = await db.collection("aquariums").doc(req.params.aquariumId).get();
-    if (!aquarium.exists) return res.status(404).json({ message: "Aquarium was not found." });
-    const data = aquarium.data();
-    const systemConfig = { ...data.systemConfig };
-    delete systemConfig.unit;
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+    const { tempConfig, lightingConfig, feederConfig, systemConfig } = aquarium.data;
     return res.json(
         serializeFirestore({
-            tempConfig: data.tempConfig,
-            lightingConfig: data.lightingConfig,
-            feederConfig: data.feederConfig,
-            systemConfig,
+            tempConfig,
+            lightingConfig,
+            feederConfig,
+            systemConfig: { pollFrequency: systemConfig?.pollFrequency, timezone: systemConfig?.timezone },
         }),
     );
 });

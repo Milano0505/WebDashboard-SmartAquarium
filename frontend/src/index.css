@@ -3,36 +3,19 @@
 
 @theme {
     --font-sans: "Inter", system-ui, sans-serif;
-    --color-navy-950: #060d2c;
-    --color-navy-900: #0d1b4b;
-    --color-navy-800: #162060;
-    --color-sidebar: #3b7cf4;
-    --color-sidebar-hover: #2563eb;
-    --color-sidebar-active: #1d4ed8;
 }
 
-* {
-    font-family: "Inter", system-ui, sans-serif;
-}
-
-:root {
-    --scrollbar-width: 6px;
-}
-
-/* Global scrollbar */
-
-/* Firefox scrollbar */
+/* Scrollbar tipis biru (Firefox: aturan pertama, Chrome/Edge/Safari: ::-webkit) */
 * {
     scrollbar-width: thin;
     scrollbar-color: rgba(59, 124, 244, 0.25) transparent;
 }
-
-/* WebKit scrollbar */
 ::-webkit-scrollbar {
     width: 5px;
     height: 5px;
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
     background: transparent;
 }
 ::-webkit-scrollbar-thumb {
@@ -43,11 +26,8 @@
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(59, 124, 244, 0.55);
 }
-::-webkit-scrollbar-corner {
-    background: transparent;
-}
 
-/* Content scrollbar */
+/* Konten halaman: scrollbar lebih jelas saat hover */
 .scroll-area {
     overflow-y: auto;
 }
@@ -58,29 +38,20 @@
     background: rgba(59, 124, 244, 0.45);
 }
 
-/* Application chrome scrollbar */
+/* Tanpa scrollbar di header dan sidebar */
+header,
+aside,
+aside * {
+    scrollbar-width: none !important;
+}
 header::-webkit-scrollbar,
 aside::-webkit-scrollbar,
 aside *::-webkit-scrollbar {
     width: 0 !important;
     display: none !important;
 }
-header,
-aside,
-aside * {
-    scrollbar-width: none !important;
-}
 
-/* Hidden scrollbar utility */
-.no-scrollbar::-webkit-scrollbar {
-    width: 0 !important;
-    display: none !important;
-}
-.no-scrollbar {
-    scrollbar-width: none !important;
-}
-
-/* Range input */
+/* Slider; bagian track yang terisi diatur inline oleh <RangeSlider> */
 input[type="range"] {
     -webkit-appearance: none;
     appearance: none;

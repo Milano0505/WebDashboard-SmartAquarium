@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+// Grafik garis/area SVG untuk suhu. `data` = [{ time, temp }], urut dari terlama
 export default function AreaChart({ data, height = 200 }) {
     const containerRef = useRef(null);
     const [width, setWidth] = useState(350);
@@ -39,14 +40,17 @@ export default function AreaChart({ data, height = 200 }) {
     const iw = w - pad.left - pad.right;
     const ih = h - pad.top - pad.bottom;
     const temps = data.map(d => d.temp);
+    // Rentang sumbu Y: data ± 1°
     const minT = Math.floor(Math.min(...temps)) - 1;
     const maxT = Math.ceil(Math.max(...temps)) + 1;
-    const xScale = i => pad.left + (i / (data.length - 1)) * iw;
+    // Satu data saja digambar di tengah (hindari pembagian nol)
+    const xScale = i => pad.left + (data.length > 1 ? i / (data.length - 1) : 0.5) * iw;
     const yScale = v => pad.top + ih - ((v - minT) / (maxT - minT)) * ih;
     const points = data.map((d, i) => [xScale(i), yScale(d.temp)]);
     const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
     const area = `${line} L${points[points.length - 1][0].toFixed(1)},${(pad.top + ih).toFixed(1)} L${points[0][0].toFixed(1)},${(pad.top + ih).toFixed(1)} Z`;
     const yTicks = [Math.round(minT + 1), Math.round((minT + maxT) / 2), Math.round(maxT - 1)];
+    // Label dan titik di ±6 posisi, termasuk data terakhir
     const step = Math.max(1, Math.floor((data.length - 1) / 5));
 
     return (
@@ -59,7 +63,7 @@ export default function AreaChart({ data, height = 200 }) {
                     </linearGradient>
                 </defs>
 
-                {/* Grid + y-axis labels */}
+                {/* Grid dan label sumbu Y */}
                 {yTicks.map(t => (
                     <g key={t}>
                         <line
@@ -76,7 +80,7 @@ export default function AreaChart({ data, height = 200 }) {
                     </g>
                 ))}
 
-                {/* X-axis labels */}
+                {/* Label sumbu X */}
                 {data.map((d, i) => {
                     if (i % step !== 0 && i !== data.length - 1) return null;
                     return (
@@ -86,7 +90,7 @@ export default function AreaChart({ data, height = 200 }) {
                     );
                 })}
 
-                {/* Chart fill + line */}
+                {/* Area dan garis */}
                 <path d={area} fill="url(#ag)" />
                 <path
                     d={line}
@@ -97,7 +101,7 @@ export default function AreaChart({ data, height = 200 }) {
                     strokeLinecap="round"
                 />
 
-                {/* Dots at labelled points */}
+                {/* Titik pada data berlabel */}
                 {data.map((d, i) => {
                     if (i % step !== 0 && i !== data.length - 1) return null;
                     return (

@@ -4,6 +4,7 @@ import { register } from "../api/service";
 import { Camera, ChevronLeft, Eye, EyeOff, Fish, Lock, Mail, User } from "../components/Icons";
 import { ErrorAlert, InputField, PrimaryBtn } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
+import { initialsOf } from "../utils/format";
 import { createProfilePhotoDataUrl } from "../utils/profilePhoto";
 
 export default function RegisterPage() {
@@ -22,6 +23,7 @@ export default function RegisterPage() {
     const navigate = useNavigate();
     const fileRef = useRef();
 
+    // Lepas URL preview foto yang dipilih
     useEffect(
         () => () => {
             if (avatar?.startsWith("blob:")) URL.revokeObjectURL(avatar);
@@ -59,6 +61,7 @@ export default function RegisterPage() {
         }
         setLoading(true);
         try {
+            // Foto opsional dikecilkan dan dikompres jadi data URL JPEG
             const photoUrl = avatarFile ? await createProfilePhotoDataUrl(avatarFile) : null;
             const { userProfile } = await register({
                 fullName: form.name,
@@ -75,15 +78,6 @@ export default function RegisterPage() {
         }
     };
 
-    const initials = form.name
-        ? form.name
-              .split(" ")
-              .map(n => n[0])
-              .join("")
-              .toUpperCase()
-              .slice(0, 2)
-        : "?";
-
     return (
         <div
             className="min-h-screen flex items-center justify-center p-0 md:p-8"
@@ -92,7 +86,7 @@ export default function RegisterPage() {
             }}
         >
             <div className="w-full max-w-[430px] min-h-screen md:min-h-0 flex flex-col md:rounded-3xl md:overflow-hidden md:shadow-2xl">
-                {/* Registration header */}
+                {/* Bagian atas */}
                 <div className="flex flex-col items-center pt-10 pb-6 px-6 text-white">
                     <button
                         onClick={() => navigate("/login")}
@@ -107,7 +101,7 @@ export default function RegisterPage() {
                     <p className="text-blue-300 text-sm text-center">Create your account to get started.</p>
                 </div>
 
-                {/* Registration form */}
+                {/* Form registrasi */}
                 <div className="flex-1 bg-white rounded-t-3xl px-6 pt-8 pb-10 space-y-4 overflow-y-auto scroll-area">
                     <div className="mb-2">
                         <h2 className="text-xl font-bold text-slate-800">Create Account</h2>
@@ -116,7 +110,7 @@ export default function RegisterPage() {
 
                     <ErrorAlert message={error} />
 
-                    {/* Avatar picker */}
+                    {/* Pilih foto profil */}
                     <div className="flex flex-col items-center pb-2">
                         <button
                             type="button"
@@ -127,7 +121,7 @@ export default function RegisterPage() {
                                 <img src={avatar} alt="avatar" className="w-full h-full object-cover" />
                             ) : form.name ? (
                                 <div className="w-full h-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold">
-                                    {initials}
+                                    {initialsOf(form.name)}
                                 </div>
                             ) : (
                                 <Camera />

@@ -1,45 +1,53 @@
+// Client REST API. Semua request lewat `request` yang menambahkan JWT dan mengubah error
+// menjadi Error berisi pesan API dan status HTTP
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+// Harus sama dengan SHARED_AQUARIUM_ID di backend
 export const AQUARIUM_ID = import.meta.env.VITE_AQUARIUM_ID || "aquarium-001";
+
+const TOKEN_KEY = "sa_token";
+
+// ---------- Token sesi ----------
 
 export const getToken = () => {
     try {
-        return localStorage.getItem("sa_token");
+        return localStorage.getItem(TOKEN_KEY);
     } catch (error) {
         console.warn("Unable to read the saved session token.", error);
-
         return null;
     }
 };
 
-export const setToken = token => localStorage.setItem("sa_token", token);
+export const setToken = token => localStorage.setItem(TOKEN_KEY, token);
 
-export const clearToken = () => localStorage.removeItem("sa_token");
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
-function getAquariumId(aquariumId) {
-    if (aquariumId && aquariumId !== AQUARIUM_ID) {
-        throw new Error("This installation is configured for one aquarium.");
-    }
-    return AQUARIUM_ID;
-}
+// ---------- Fungsi bantu request ----------
 
 function aquariumPath(aquariumId) {
-    return `/api/aquariums/${encodeURIComponent(getAquariumId(aquariumId))}`;
+    if (aquariumId && aquariumId !== AQUARIUM_ID) throw new Error("This installation is configured for one aquarium.");
+    return `/api/aquariums/${encodeURIComponent(AQUARIUM_ID)}`;
+}
+
+function queryString(parameters) {
+    const query = new URLSearchParams();
+    Object.entries(parameters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+    });
+    const serialized = query.toString();
+    return serialized ? `?${serialized}` : "";
 }
 
 async function request(path, options = {}) {
+    const token = getToken();
     let response;
-
     try {
         response = await fetch(`${API_BASE_URL}${path}`, {
             ...options,
-
             headers: {
                 Accept: "application/json",
-
                 ...(options.body ? { "Content-Type": "application/json" } : {}),
-
-                ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
-
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...options.headers,
             },
         });
@@ -47,23 +55,19 @@ async function request(path, options = {}) {
         throw new Error("Unable to connect to the API. Check that the backend is running.");
     }
 
-    const contentType = response.headers.get("content-type") || "";
-
-    const body = contentType.includes("application/json")
-        ? await response.json().catch(() => null)
-        : await response.text();
+    const isJson = (response.headers.get("content-type") || "").includes("application/json");
+    const body = isJson ? await response.json().catch(() => null) : await response.text();
 
     if (!response.ok) {
+        // Sesi tidak valid: logout otomatis (event didengarkan AuthContext)
         if (response.status === 401) {
             try {
                 clearToken();
                 localStorage.removeItem("sa_user");
             } catch {
-                // Unauthorized response handling
+                // Storage bisa tidak tersedia; event di bawah tetap mengeluarkan user
             }
-            if (typeof window !== "undefined") {
-                window.dispatchEvent(new Event("sa:unauthorized"));
-            }
+            window.dispatchEvent(new Event("sa:unauthorized"));
         }
         const error = new Error(body?.message || response.statusText || "Request failed.");
         error.status = response.status;
@@ -75,210 +79,113 @@ async function request(path, options = {}) {
 
 async function apiFetch(path, options = {}) {
     const { body } = await request(path, options);
-
     return body;
 }
 
-function jsonBody(value) {
-    return JSON.stringify(value);
+const send = (method, path, payload) =>
+    apiFetch(path, { method, ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) });
+
+// GET yang mengembalikan `fallback` jika akuarium belum ada (404)
+async function getOrFallback(path, fallback) {
+    try {
+        return await apiFetch(path);
+    } catch (error) {
+        if (error.status === 404) return fallback;
+        throw error;
+    }
 }
 
-export function relativeTime(value) {
-    if (value === null || value === undefined || value === "") return "--";
-    const timestamp = new Date(value).getTime();
-
-    if (!Number.isFinite(timestamp)) return "Unknown time";
-
-    const minutes = Math.floor((Date.now() - timestamp) / 60000);
-
-    if (minutes < 1) return "Just now";
-
-    if (minutes < 60) return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
-
-    const hours = Math.floor(minutes / 60);
-
-    if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-
-    const days = Math.floor(hours / 24);
-
-    if (days === 1) return "Yesterday";
-
-    return `${days} days ago`;
-}
+// ---------- Autentikasi ----------
 
 export async function login(email, password) {
-    const result = await apiFetch("/api/auth/login", {
-        method: "POST",
-
-        body: jsonBody({ email, password }),
-    });
-
+    const result = await send("POST", "/api/auth/login", { email, password });
     setToken(result.token);
-
     return result;
 }
 
 export async function register(data) {
-    const result = await apiFetch("/api/auth/register", {
-        method: "POST",
-
-        body: jsonBody(data),
-    });
-
+    const result = await send("POST", "/api/auth/register", data);
     setToken(result.token);
-
     return result;
 }
 
-export async function changePassword({ currentPassword, newPassword }) {
-    return apiFetch("/api/auth/change-password", {
-        method: "POST",
-
-        body: jsonBody({ currentPassword, newPassword }),
-    });
-}
+export const changePassword = ({ currentPassword, newPassword }) =>
+    send("POST", "/api/auth/change-password", { currentPassword, newPassword });
 
 export async function logout() {
     clearToken();
 }
 
-export async function getUserProfile(userId) {
-    return apiFetch(`/api/users/${encodeURIComponent(userId)}`);
-}
+// ---------- Profil user ----------
 
-export async function updateUserProfile(userId, { fullName, photoUrl }) {
-    return apiFetch(`/api/users/${encodeURIComponent(userId)}`, {
-        method: "PUT",
+export const getUserProfile = userId => apiFetch(`/api/users/${encodeURIComponent(userId)}`);
 
-        body: jsonBody({ fullName, photoUrl }),
+export const updateUserProfile = (userId, { fullName, photoUrl }) =>
+    send("PUT", `/api/users/${encodeURIComponent(userId)}`, { fullName, photoUrl });
+
+// ---------- Konfigurasi akuarium ----------
+
+export const getAquarium = aquariumId => getOrFallback(aquariumPath(aquariumId), null);
+
+export const updateTemperatureConfig = (aquariumId, payload) =>
+    send("PATCH", `${aquariumPath(aquariumId)}/temperature-config`, payload);
+
+export const updateLightingConfig = (aquariumId, payload) =>
+    send("PATCH", `${aquariumPath(aquariumId)}/lighting-config`, payload);
+
+export const updateFeederConfig = (aquariumId, payload) =>
+    send("PATCH", `${aquariumPath(aquariumId)}/feeder-config`, payload);
+
+export const updateSystemConfig = (aquariumId, payload) =>
+    send("PATCH", `${aquariumPath(aquariumId)}/system-config`, payload);
+
+export const triggerFeeder = aquariumId => send("POST", `${aquariumPath(aquariumId)}/feeder/trigger`);
+
+// ---------- Telemetry ----------
+
+export const getTelemetry = (aquariumId, { startDate, endDate, limit = 40 } = {}) =>
+    getOrFallback(`${aquariumPath(aquariumId)}/telemetry${queryString({ startDate, endDate, limit })}`, {
+        telemetryRecords: [],
+        total: 0,
     });
-}
-
-export async function getAquarium(aquariumId) {
-    try {
-        return await apiFetch(aquariumPath(aquariumId));
-    } catch (error) {
-        if (error.status === 404) return null;
-        throw error;
-    }
-}
-
-export async function updateTemperatureConfig(aquariumId, payload) {
-    return apiFetch(`${aquariumPath(aquariumId)}/temperature-config`, {
-        method: "PATCH",
-
-        body: jsonBody(payload),
-    });
-}
-
-export async function updateLightingConfig(aquariumId, payload) {
-    return apiFetch(`${aquariumPath(aquariumId)}/lighting-config`, {
-        method: "PATCH",
-
-        body: jsonBody(payload),
-    });
-}
-
-export async function updateFeederConfig(aquariumId, payload) {
-    return apiFetch(`${aquariumPath(aquariumId)}/feeder-config`, {
-        method: "PATCH",
-
-        body: jsonBody(payload),
-    });
-}
-
-export async function triggerFeeder(aquariumId) {
-    return apiFetch(`${aquariumPath(aquariumId)}/feeder/trigger`, {
-        method: "POST",
-    });
-}
-
-export async function updateSystemConfig(aquariumId, payload) {
-    return apiFetch(`${aquariumPath(aquariumId)}/system-config`, {
-        method: "PATCH",
-
-        body: jsonBody(payload),
-    });
-}
-
-function queryString(parameters) {
-    const query = new URLSearchParams();
-
-    Object.entries(parameters).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
-    });
-
-    const serialized = query.toString();
-
-    return serialized ? `?${serialized}` : "";
-}
-
-export async function getTelemetry(aquariumId, { startDate, endDate, limit = 40 } = {}) {
-    try {
-        return await apiFetch(`${aquariumPath(aquariumId)}/telemetry${queryString({ startDate, endDate, limit })}`);
-    } catch (error) {
-        if (error.status === 404) return { telemetryRecords: [], total: 0 };
-        throw error;
-    }
-}
 
 export async function exportTelemetry(aquariumId, { startDate, endDate, format = "csv" } = {}) {
     const { response, body } = await request(
         `${aquariumPath(aquariumId)}/telemetry/export${queryString({ startDate, endDate, format })}`,
     );
-
     const disposition = response.headers.get("content-disposition") || "";
-
     const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "telemetry.csv";
-
     return { csv: body, filename };
 }
 
+// 12 pembacaan terakhir (terlama dulu) untuk <AreaChart>
 export async function getTemperatureChart(aquariumId) {
     const { telemetryRecords } = await getTelemetry(aquariumId, { limit: 12 });
-
     return telemetryRecords
-
         .filter(record => Number.isFinite(new Date(record.timestamp).getTime()))
-
         .reverse()
-
         .map(record => ({
             time: new Date(record.timestamp).toLocaleTimeString([], {
                 hour: "2-digit",
-
                 minute: "2-digit",
-
                 hour12: false,
             }),
-
             temp: record.temp,
         }));
 }
 
-export async function getNotifications(aquariumId, { limit, readStatus } = {}) {
-    try {
-        return await apiFetch(`${aquariumPath(aquariumId)}/notifications${queryString({ limit, readStatus })}`);
-    } catch (error) {
-        if (error.status === 404) return { notificationRecords: [] };
-        throw error;
-    }
-}
+// ---------- Notifikasi ----------
 
-export async function markNotificationRead(aquariumId, notificationId) {
-    return apiFetch(`${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}/read`, {
-        method: "PATCH",
+export const getNotifications = (aquariumId, { limit, readStatus } = {}) =>
+    getOrFallback(`${aquariumPath(aquariumId)}/notifications${queryString({ limit, readStatus })}`, {
+        notificationRecords: [],
     });
-}
 
-export async function markAllNotificationsRead(aquariumId) {
-    return apiFetch(`${aquariumPath(aquariumId)}/notifications/read-all`, {
-        method: "PATCH",
-    });
-}
+export const markNotificationRead = (aquariumId, notificationId) =>
+    send("PATCH", `${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}/read`);
 
-export async function deleteNotification(aquariumId, notificationId) {
-    return apiFetch(`${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}`, {
-        method: "DELETE",
-    });
-}
+export const markAllNotificationsRead = aquariumId =>
+    send("PATCH", `${aquariumPath(aquariumId)}/notifications/read-all`);
+
+export const deleteNotification = (aquariumId, notificationId) =>
+    send("DELETE", `${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}`);

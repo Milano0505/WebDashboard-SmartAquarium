@@ -1,33 +1,38 @@
 # Smart Aquarium Control
 
-Dashboard web untuk memantau telemetry dan mengelola konfigurasi aquarium berbasis ESP32. Aplikasi terdiri dari frontend React, REST API Express, dan Firebase Cloud Firestore. Source firmware ESP32 belum disertakan di repository ini.
+Dashboard web untuk memantau dan mengontrol akuarium berbasis ESP32. Sistem terdiri dari frontend React, REST API Express, dan Firebase Cloud Firestore. Firmware ESP32 tidak ada di repository ini.
+
+Detail arsitektur, skema database, dan daftar API lengkap ada di [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
 
 ## Fitur
 
-- Login dan registrasi dengan password bcrypt serta sesi JWT.
-- Semua akun terautentikasi dapat mengakses satu aquarium bersama yang ID-nya dikonfigurasi, default `aquarium-001`.
-- Anggota dapat mengubah konfigurasi suhu, lampu, feeder, dan sistem; aksi perubahan menghasilkan alert yang dapat dilihat anggota aquarium.
-- Alerts menyebutkan nama user pelaku. Alert profil/password hanya terlihat oleh pemilik profil.
-- Telemetry dan riwayat selalu menggunakan satu aquarium terkonfigurasi. History menampilkan data perangkat.
-- Riwayat dapat difilter dan diekspor ke CSV; browser notification tersedia selama dashboard terbuka.
+| Fitur         | Keterangan                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| Monitoring    | Suhu dan status heater, LED, feeder yang refresh otomatis, indikator perangkat online/offline, dan grafik suhu. |
+| Suhu          | Suhu target dan mode heater otomatis/manual.                                                                    |
+| Lampu         | Jadwal LED harian, mode otomatis/manual, dan rata-rata jam ON/OFF per hari yang dihitung server.                |
+| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** pada mode manual.                                         |
+| Riwayat       | Data telemetry dalam tampilan tabel dan kalender, pencarian, filter, dan ekspor CSV.                            |
+| Alerts        | Alert suhu di luar batas, log perubahan konfigurasi, dan **browser notification**. Tidak ada email atau SMS.    |
+| Akun          | Registrasi dan login (bcrypt + JWT), foto profil, ganti nama dan password. Email tidak dapat diubah.            |
+| Akses bersama | Semua akun memantau dan mengontrol satu akuarium yang sama (default `aquarium-001`).                            |
 
 ## Teknologi
 
-| Bagian         | Teknologi                                                     |
-| -------------- | ------------------------------------------------------------- |
-| Frontend       | React 19, React Router, Vite, Tailwind CSS 4                  |
-| Backend        | Node.js, Express 5, Firebase Admin SDK                        |
-| Database       | Firebase Cloud Firestore                                      |
-| Authentication | JWT, bcrypt                                                   |
-| Hardware       | ESP32                                                         |
+| Bagian         | Teknologi                                        |
+| -------------- | ------------------------------------------------ |
+| Frontend       | React 19, React Router 7, Vite 8, Tailwind CSS 4 |
+| Backend        | Node.js 22, Express 5, Firebase Admin SDK        |
+| Database       | Firebase Cloud Firestore                         |
+| Authentication | JWT (pengguna), device key (ESP32), bcrypt       |
+| Hardware       | ESP32 melalui HTTP REST API                      |
 
 ## Menjalankan Secara Lokal
 
-Prasyarat: Node.js 22 LTS, pnpm, project Firebase dengan Firestore aktif, dan service-account credential untuk backend.
+Prasyarat: Node.js 22, pnpm, project Firebase dengan Firestore aktif, dan service-account key untuk backend.
 
-1. Buat `backend/.env` dari `backend/.env.example` dan `frontend/.env` dari `frontend/.env.example`.
-2. Pastikan `SHARED_AQUARIUM_ID` pada backend sama dengan `VITE_AQUARIUM_ID` pada frontend. Isi `JWT_SECRET`, `HARDWARE_API_KEY`, dan kredensial Firebase.
-3. Di terminal pertama, jalankan backend:
+1. Salin `backend/.env.example` menjadi `backend/.env` dan `frontend/.env.example` menjadi `frontend/.env`, lalu isi nilainya (lihat tabel di bawah). Simpan service-account key sebagai `backend/serviceAccountKey.json`.
+2. Jalankan backend di terminal pertama:
 
     ```powershell
     cd backend
@@ -35,73 +40,56 @@ Prasyarat: Node.js 22 LTS, pnpm, project Firebase dengan Firestore aktif, dan se
     npm run dev
     ```
 
-4. Di terminal kedua, jalankan frontend:
+3. Jalankan frontend di terminal kedua:
 
     ```powershell
     cd frontend
-    npm install
-    npm run dev
+    pnpm install
+    pnpm dev
     ```
 
-5. Buka URL Vite yang dicetak di terminal, biasanya `http://localhost:5173`. Periksa backend melalui `http://localhost:5000/api/health`.
-
-Frontend memakai `http://localhost:5000` sebagai API default. Ubah `VITE_API_URL` jika backend berjalan di alamat lain. Port backend dikendalikan oleh `PORT`; `backend/.env.example` mengatur port `5000`.
+4. Buka URL Vite yang muncul di terminal (biasanya `http://localhost:5173`). Cek backend di `http://localhost:5000/api/health`.
 
 ## Konfigurasi Environment
 
-| Variabel                        | Fungsi                                                                                                                                        |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                          | Port HTTP API, default aplikasi `3000`; contoh environment memakai `5000`.                                                                    |
-| `NODE_ENV`                      | Gunakan `production` untuk deployment production.                                                                                             |
-| `JWT_SECRET`                    | Secret penandatanganan token. Wajib di production.                                                                                            |
-| `HARDWARE_API_KEY`              | Secret pada header `x-device-key` untuk request perangkat.                                                                                    |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Kredensial service account sebagai JSON string, bila digunakan.                                                                               |
-| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path service-account JSON. Bila tidak diatur, backend mencari `backend/serviceAccountKey.json`, lalu mencoba Application Default Credentials. |
-| `FRONTEND_ORIGIN`               | Daftar origin frontend yang diizinkan saat `NODE_ENV=production`, dipisahkan koma.                                                            |
-| `SHARED_AQUARIUM_ID`            | ID aquarium yang digunakan bersama; default `aquarium-001`. Samakan nilainya di seluruh instance backend.                                     |
-| `VITE_API_URL`                  | URL backend yang digunakan frontend; default `http://localhost:5000`.                                                                         |
-| `VITE_AQUARIUM_ID`              | Satu-satunya ID aquarium yang digunakan frontend; harus sama dengan `SHARED_AQUARIUM_ID`.                                                     |
+| Variabel                        | Lokasi   | Fungsi                                                                                             |
+| ------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `PORT`                          | backend  | Port API. Default kode `3000`; contoh `.env` memakai `5000`.                                       |
+| `NODE_ENV`                      | backend  | Isi `production` saat deploy. CORS lalu hanya mengizinkan `FRONTEND_ORIGIN`.                       |
+| `JWT_SECRET`                    | backend  | Secret token login. Wajib di production; di development dibuat otomatis di `.dev-jwt-secret`.      |
+| `HARDWARE_API_KEY`              | backend  | Nilai header `x-device-key` yang wajib dikirim ESP32.                                              |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | backend  | Service-account sebagai string JSON (opsional).                                                    |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | backend  | Path file service-account. Default `serviceAccountKey.json`, lalu Application Default Credentials. |
+| `FRONTEND_ORIGIN`               | backend  | Origin frontend yang diizinkan di production, dipisahkan koma.                                     |
+| `SHARED_AQUARIUM_ID`            | backend  | ID akuarium bersama. Default `aquarium-001`.                                                       |
+| `VITE_API_URL`                  | frontend | URL backend. Default `http://localhost:5000`.                                                      |
+| `VITE_AQUARIUM_ID`              | frontend | Harus sama dengan `SHARED_AQUARIUM_ID`.                                                            |
 
-Di development, backend dapat membuat `.dev-jwt-secret` lokal bila `JWT_SECRET` tidak ditetapkan. Gunakan secret eksplisit dan penyimpanan secret terkelola di production.
+Jangan commit file `.env`, `serviceAccountKey.json`, atau `.dev-jwt-secret` (sudah ada di `.gitignore`).
 
-## Model Data
+## Script
 
-- `users/{userId}` menyimpan profil dan hash password.
-- `aquariums/{AQUARIUM_ID}` menyimpan owner `userId`, konfigurasi, status realtime, dan metadata hardware. Semua akun yang lolos autentikasi diberi akses ke ID aquarium tunggal tersebut.
-- `aquariums/{aquariumId}/telemetry_history/{autoId}` hanya menyimpan data sensor/perangkat.
-- `aquariums/{AQUARIUM_ID}/notifications/{autoId}` menyimpan alert global dan private. Alert global memakai `userid: null` dan mencatat pelaku di `userId`; alert profil/password mencantumkan penerima di `userid` dan `scope: "user"`.
+| Perintah                         | Fungsi                                                       |
+| -------------------------------- | ------------------------------------------------------------ |
+| `npm run dev` (backend)          | Menjalankan API dengan auto-reload (nodemon).                |
+| `npm start` (backend)            | Menjalankan API tanpa auto-reload.                           |
+| `pnpm dev` (frontend)            | Menjalankan dev server Vite.                                 |
+| `pnpm build` (frontend)          | Build produksi ke `frontend/dist`.                           |
+| `npm run format` / `pnpm format` | Merapikan kode dengan Prettier (`.prettierrc.json` di root). |
 
-`aquariumId` pada telemetry dan notification mengidentifikasi konteks aquarium. `userId` pada telemetry tidak menunjukkan pembuat data sensor, sehingga nilainya `null`. Pada alert global, `userId` mengidentifikasi pelaku; pada alert privat, `userid` adalah penerima.
+## Struktur Singkat
 
-Telemetry dan semua notification berada pada subcollection aquarium. History hanya membaca telemetry hardware dari aquarium tunggal. Notification profil/password tetap privat melalui filter `userid`; read/dismiss alerts global tetap per-user.
-
-### Akses Bersama
-
-Saat registrasi, akun baru bergabung ke aquarium dengan ID `SHARED_AQUARIUM_ID`. Saat login, akun lama juga diarahkan ke aquarium tersebut. API dashboard hanya menerima ID tunggal yang dikonfigurasi. Untuk memakai aquarium ID lain di masa depan, ubah konfigurasi backend dan frontend bersama-sama.
-
-## API Utama
-
-Semua endpoint `/api/users` dan `/api/aquariums` memerlukan `Authorization: Bearer <token>`, kecuali register/login. Endpoint hardware memakai `x-device-key`.
-
-| Method       | Endpoint                                                        | Ringkasan                                                                      |
-| ------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `POST`       | `/api/auth/register`                                            | Buat akun dan bergabung ke aquarium shared.                                    |
-| `POST`       | `/api/auth/login`                                               | Verifikasi kredensial dan migrasi akses shared untuk akun lama.                |
-| `POST`       | `/api/auth/change-password`                                     | Ubah password dan buat pemberitahuan privat.                                   |
-| `GET`, `PUT` | `/api/users/:userId`                                            | Baca atau ubah profil sendiri. Perubahan profil membuat pemberitahuan privat.  |
-| `GET`        | `/api/aquariums/:aquariumId`                                    | Baca aquarium tunggal jika ID sesuai konfigurasi.                              |
-| `PATCH`      | `/api/aquariums/:aquariumId/temperature-config`                 | Ubah konfigurasi suhu; perubahan aktual membuat alert bersama.                 |
-| `PATCH`      | `/api/aquariums/:aquariumId/lighting-config`                    | Ubah mode, kontrol, atau jadwal lampu dan buat alert bersama.                  |
-| `PATCH`      | `/api/aquariums/:aquariumId/feeder-config`                      | Ubah konfigurasi feeder dan buat alert bersama.                                |
-| `PATCH`      | `/api/aquariums/:aquariumId/system-config`                      | Ubah unit, poll frequency, atau timezone dan buat alert bersama.               |
-| `POST`       | `/api/aquariums/:aquariumId/feeder/trigger`                     | Trigger feeder manual; hanya saat mode `MANUAL`.                               |
-| `GET`        | `/api/aquariums/:aquariumId/telemetry`                          | Ambil history aquarium dengan filter tanggal dan batas record.                 |
-| `GET`        | `/api/aquariums/:aquariumId/telemetry/export`                   | Ekspor telemetry ke CSV.                                                       |
-| `GET`        | `/api/aquariums/:aquariumId/notifications`                      | Ambil alerts aquarium dan alerts privat user.                                  |
-| `PATCH`      | `/api/aquariums/:aquariumId/notifications/read-all`             | Tandai alerts yang tampil sebagai dibaca oleh user ini.                        |
-| `PATCH`      | `/api/aquariums/:aquariumId/notifications/:notificationId/read` | Tandai satu alert sebagai dibaca oleh user ini.                                |
-| `DELETE`     | `/api/aquariums/:aquariumId/notifications/:notificationId`      | Dismiss alert global untuk user ini atau hapus alert privatnya.                |
-| `POST`       | `/api/hardware/:aquariumId/telemetry`                           | Terima telemetry perangkat dan buat temperature alert saat melewati threshold. |
-| `GET`        | `/api/hardware/:aquariumId/config`                              | Ambil konfigurasi yang dibaca perangkat.                                       |
-
-Daftar field dan parameter terperinci, termasuk struktur Firestore dan alur request, ada di [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
+```text
+backend/
+  config/       Firebase, JWT secret, ID akuarium, data awal akuarium
+  middleware/   Autentikasi JWT dan device key
+  routes/       auth, users, aquariums, hardware
+  utils/        Validasi config, notifikasi, serialisasi Firestore
+frontend/src/
+  api/          Client REST API
+  components/   Layout, komponen UI, chart, ikon
+  context/      Sesi login
+  hooks/        Badge unread dan browser notification
+  pages/        Login, Register, Dashboard, History, Alerts, Configuration
+  utils/        Format suhu/waktu dan kompresi foto profil
+```

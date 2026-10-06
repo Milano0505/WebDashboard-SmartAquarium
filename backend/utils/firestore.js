@@ -6,6 +6,7 @@ export function toIsoString(value) {
     return value ?? null;
 }
 
+// Ubah Timestamp Firestore menjadi string ISO agar bisa dikirim sebagai JSON
 export function serializeFirestore(value) {
     if (value instanceof Date || value instanceof admin.firestore.Timestamp) {
         return value.toDate ? value.toDate().toISOString() : value.toISOString();

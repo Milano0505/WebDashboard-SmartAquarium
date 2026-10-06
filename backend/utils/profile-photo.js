@@ -2,6 +2,7 @@ const MAX_PHOTO_BYTES = 180 * 1024;
 const MAX_DATA_URL_LENGTH = Math.ceil(MAX_PHOTO_BYTES / 3) * 4 + 32;
 const jpegDataUrlPattern = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
 
+// Valid: null, URL HTTP(S), atau data URL JPEG maks. 180 KB
 export function isValidProfilePhotoUrl(value) {
     if (value === null) return true;
     if (typeof value !== "string") return false;

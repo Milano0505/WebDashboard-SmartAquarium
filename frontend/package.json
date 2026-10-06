@@ -7,7 +7,7 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
-        "format": "oxfmt"
+        "format": "prettier --write src"
     },
     "dependencies": {
         "react": "^19.0.0",
@@ -17,7 +17,7 @@
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",
         "@vitejs/plugin-react": "^6.0.0",
-        "oxfmt": "^0.2.0",
+        "prettier": "^3.9.9",
         "tailwindcss": "^4.0.0",
         "vite": "^8.0.5"
     }

@@ -2,20 +2,39 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { logout as apiLogout, getToken, getUserProfile, updateUserProfile } from "../api/service";
 
 const AuthContext = createContext(null);
+const USER_KEY = "sa_user";
 
+// ---------- Fungsi bantu ----------
+
+// Versi lama bisa menyimpan URL blob: sebagai foto profil; URL ini rusak setelah reload
+const isBlobUrl = url => typeof url === "string" && url.startsWith("blob:");
+
+function readStoredUser() {
+    try {
+        const storedUser = JSON.parse(localStorage.getItem(USER_KEY));
+        return isBlobUrl(storedUser?.photoUrl) ? { ...storedUser, photoUrl: null } : storedUser;
+    } catch {
+        return null;
+    }
+}
+
+function clearStoredUser() {
+    try {
+        localStorage.removeItem(USER_KEY);
+    } catch (error) {
+        console.warn("Unable to remove the saved user profile.", error);
+    }
+}
+
+// ---------- Provider ----------
+
+// Simpan user di localStorage dan validasi ulang sesi ke API saat aplikasi dibuka
 export function AuthProvider({ children }) {
     const [isAuthLoading, setIsAuthLoading] = useState(true);
-    const [user, setUser] = useState(() => {
-        try {
-            const storedUser = JSON.parse(localStorage.getItem("sa_user"));
-            return storedUser?.photoUrl?.startsWith("blob:") ? { ...storedUser, photoUrl: null } : storedUser;
-        } catch {
-            return null;
-        }
-    });
+    const [user, setUser] = useState(readStoredUser);
 
-    const signIn = userData => {
-        localStorage.setItem("sa_user", JSON.stringify(userData));
+    const saveUser = userData => {
+        localStorage.setItem(USER_KEY, JSON.stringify(userData));
         setUser(userData);
     };
 
@@ -24,67 +43,50 @@ export function AuthProvider({ children }) {
             await apiLogout();
         } finally {
             setUser(null);
-            try {
-                localStorage.removeItem("sa_user");
-            } catch (error) {
-                console.warn("Unable to remove the saved user profile.", error);
-            }
+            clearStoredUser();
         }
     };
 
+    // Jalan sekali saat aplikasi dibuka
     useEffect(() => {
         let isMounted = true;
+
+        // Dipicu client API saat respons 401
         const handleUnauthorized = () => {
             setUser(null);
             setIsAuthLoading(false);
         };
-
         window.addEventListener("sa:unauthorized", handleUnauthorized);
 
-        const validateSession = async () => {
-            const token = getToken();
-            if (!user || !token) {
-                try {
-                    await apiLogout();
-                    localStorage.removeItem("sa_user");
-                } catch (error) {
-                    console.warn("Unable to clear an incomplete session.", error);
-                } finally {
-                    if (isMounted) {
-                        setUser(null);
-                        setIsAuthLoading(false);
-                    }
-                }
-                return;
-            }
-
+        const endSession = async () => {
             try {
+                await apiLogout();
+            } catch (error) {
+                console.warn("Unable to clear the session token.", error);
+            }
+            clearStoredUser();
+            if (isMounted) setUser(null);
+        };
+
+        const validateSession = async () => {
+            try {
+                if (!user || !getToken()) {
+                    await endSession();
+                    return;
+                }
+
+                // Perbarui profil dari server
                 const profile = await getUserProfile(user.id || user.userId);
-                if (profile.photoUrl?.startsWith("blob:")) {
-                    try {
-                        await updateUserProfile(profile.id, { photoUrl: null });
-                    } catch (error) {
-                        console.warn("Unable to clear a temporary profile photo URL.", error);
-                    }
+                if (isBlobUrl(profile.photoUrl)) {
+                    await updateUserProfile(profile.id, { photoUrl: null }).catch(error =>
+                        console.warn("Unable to clear a temporary profile photo URL.", error),
+                    );
                     profile.photoUrl = null;
                 }
-                if (isMounted) {
-                    localStorage.setItem("sa_user", JSON.stringify(profile));
-                    setUser(profile);
-                }
+                if (isMounted) saveUser(profile);
             } catch (error) {
-                if (error.status === 401 || error.status === 404) {
-                    try {
-                        await apiLogout();
-                        localStorage.removeItem("sa_user");
-                    } catch (clearError) {
-                        console.warn("Unable to clear an expired session.", clearError);
-                    } finally {
-                        if (isMounted) setUser(null);
-                    }
-                } else {
-                    console.warn("Unable to validate the saved session.", error);
-                }
+                if (error.status === 401 || error.status === 404) await endSession();
+                else console.warn("Unable to validate the saved session.", error);
             } finally {
                 if (isMounted) setIsAuthLoading(false);
             }
@@ -101,10 +103,10 @@ export function AuthProvider({ children }) {
         <AuthContext.Provider
             value={{
                 user,
-                setUser: signIn,
+                setUser: saveUser,
                 signOut,
                 isAuthLoading,
-                isAuthenticated: !!user && !!getToken(),
+                isAuthenticated: Boolean(user && getToken()),
             }}
         >
             {children}
@@ -113,7 +115,7 @@ export function AuthProvider({ children }) {
 }
 
 export function useAuth() {
-    const ctx = useContext(AuthContext);
-    if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
-    return ctx;
+    const context = useContext(AuthContext);
+    if (!context) throw new Error("useAuth must be used inside AuthProvider");
+    return context;
 }

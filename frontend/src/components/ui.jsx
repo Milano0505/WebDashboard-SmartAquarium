@@ -1,6 +1,9 @@
-// Shared UI primitives
+// Komponen UI dasar yang dipakai semua halaman
 import { useEffect, useState } from "react";
 
+// ---------- Tampilan ----------
+
+// Jam dan tanggal sesuai timezone akuarium, update tiap detik
 export function LiveClock({ timezone = "Asia/Manila" }) {
     const [now, setNow] = useState(new Date());
     useEffect(() => {
@@ -89,6 +92,8 @@ export function Card({ children, className = "" }) {
     return <div className={`bg-white rounded-2xl border border-slate-200 p-4 ${className}`}>{children}</div>;
 }
 
+// ---------- Tombol & input ----------
+
 export function PrimaryBtn({ children, onClick, disabled, className = "", type = "button" }) {
     return (
         <button
@@ -102,18 +107,18 @@ export function PrimaryBtn({ children, onClick, disabled, className = "", type =
     );
 }
 
-export function SecondaryBtn({ children, onClick, className = "" }) {
-    return (
-        <button
-            onClick={onClick}
-            className={`w-full py-3 bg-white border border-slate-200 text-slate-700 font-semibold rounded-xl hover:bg-slate-50 active:bg-slate-100 transition-colors text-sm ${className}`}
-        >
-            {children}
-        </button>
-    );
-}
-
-export function InputField({ label, icon: Icon, type = "text", value, onChange, placeholder, right, required }) {
+export function InputField({
+    label,
+    icon: Icon,
+    type = "text",
+    value,
+    onChange,
+    placeholder,
+    right,
+    required,
+    readOnly = false,
+    hint,
+}) {
     return (
         <div>
             {label && (
@@ -133,16 +138,63 @@ export function InputField({ label, icon: Icon, type = "text", value, onChange, 
                     value={value}
                     onChange={onChange}
                     placeholder={placeholder}
+                    readOnly={readOnly}
                     className={`w-full ${Icon ? "pl-10" : "pl-3"} ${
                         right ? "pr-10" : "pr-3"
-                    } py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent bg-white`}
+                    } py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent ${
+                        readOnly ? "bg-slate-50 text-slate-500 cursor-not-allowed" : "bg-white"
+                    }`}
                 />
                 {right && <span className="absolute right-3 top-1/2 -translate-y-1/2">{right}</span>}
+            </div>
+            {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
+        </div>
+    );
+}
+
+// Slider berlabel; track terisi sampai nilai saat ini
+export function RangeSlider({
+    label,
+    valueLabel,
+    value,
+    min,
+    max,
+    step = 1,
+    onChange,
+    color = "#3b7cf4",
+    minLabel,
+    maxLabel,
+    disabled,
+}) {
+    const percent = Number.isFinite(value) ? ((value - min) / (max - min)) * 100 : 0;
+    return (
+        <div>
+            <div className="flex justify-between mb-1">
+                <span className="text-xs font-semibold text-slate-600">{label}</span>
+                <span className="text-xs font-bold" style={{ color }}>
+                    {valueLabel}
+                </span>
+            </div>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={Number.isFinite(value) ? value : min}
+                disabled={disabled}
+                onChange={event => onChange(Number(event.target.value))}
+                className="w-full"
+                style={{ background: `linear-gradient(to right, ${color} ${percent}%, #e2e8f0 ${percent}%)` }}
+            />
+            <div className="flex justify-between text-xs text-slate-400 mt-1">
+                <span>{minLabel}</span>
+                <span>{maxLabel}</span>
             </div>
         </div>
     );
 }
 
+// Pilihan mode Manual / Automatic untuk heater, LED, dan feeder
 export function ModeSelector({ mode, onMode }) {
     return (
         <div className="flex gap-2">
@@ -162,6 +214,8 @@ export function ModeSelector({ mode, onMode }) {
         </div>
     );
 }
+
+// ---------- Pesan & layout ----------
 
 export function ErrorAlert({ message }) {
     if (!message) return null;
