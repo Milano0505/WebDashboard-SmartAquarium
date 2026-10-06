@@ -1,31 +1,34 @@
 # Smart Aquarium Control
 
-Dashboard web untuk memantau dan mengontrol akuarium berbasis ESP32. Sistem terdiri dari frontend React, REST API Express, dan Firebase Cloud Firestore. Firmware ESP32 tidak ada di repository ini.
+Dashboard web untuk memantau dan mengontrol akuarium dari jarak jauh: suhu air, heater, lampu, dan pemberi pakan. Sistem terdiri dari frontend React, REST API Express, dan database Firebase Cloud Firestore. Perangkat di akuarium (ESP32) mengirim data dan membaca pengaturan lewat API; firmware-nya tidak ada di repository ini.
 
-Detail arsitektur, skema database, dan daftar API lengkap ada di [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
+| Dokumen                                      | Isi                                                   |
+| -------------------------------------------- | ----------------------------------------------------- |
+| [docs/background.md](docs/background.md)     | Masalah yang diselesaikan dan dampak sistem           |
+| [docs/architecture.md](docs/architecture.md) | Bagian-bagian sistem dan hubungannya                  |
+| [docs/api.md](docs/api.md)                   | Semua endpoint REST API                               |
+| [docs/backend.md](docs/backend.md)           | Backend dan demo API                                  |
+| [docs/database.md](docs/database.md)         | Skema Firestore dan cara membuka database             |
+| [docs/frontend.md](docs/frontend.md)         | Halaman dashboard dan demo tampilan                   |
+| [docs/integrations.md](docs/integrations.md) | Alur frontend → backend → database dan demo integrasi |
 
 ## Fitur
 
-| Fitur         | Keterangan                                                                                                      |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| Monitoring    | Suhu dan status heater, LED, feeder yang refresh otomatis, indikator perangkat online/offline, dan grafik suhu. |
-| Suhu          | Suhu target dan mode heater otomatis/manual.                                                                    |
-| Lampu         | Jadwal LED harian, mode otomatis/manual, dan rata-rata jam ON/OFF per hari yang dihitung server.                |
-| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** pada mode manual.                                         |
-| Riwayat       | Data telemetry dalam tampilan tabel dan kalender, pencarian, filter, dan ekspor CSV.                            |
-| Alerts        | Alert suhu di luar batas, log perubahan konfigurasi, dan **browser notification**. Tidak ada email atau SMS.    |
-| Akun          | Registrasi dan login (bcrypt + JWT), foto profil, ganti nama dan password. Email tidak dapat diubah.            |
-| Akses bersama | Semua akun memantau dan mengontrol satu akuarium yang sama (default `aquarium-001`).                            |
+| Fitur         | Keterangan                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Monitoring    | Suhu terkini, status heater/lampu/pemberi pakan yang diperbarui otomatis, status perangkat online/offline, dan grafik suhu. |
+| Suhu          | Suhu target dan mode heater otomatis/manual.                                                                                |
+| Lampu         | Jadwal lampu harian, mode otomatis/manual, dan rata-rata jam lampu menyala per hari.                                        |
+| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** pada mode manual.                                                     |
+| Riwayat       | Data dari perangkat dalam tampilan tabel dan kalender, dengan pencarian, filter, dan ekspor CSV.                            |
+| Alerts        | Peringatan suhu di luar batas aman, catatan perubahan pengaturan, dan **browser notification**. Tidak ada email atau SMS.   |
+| Akun          | Register dan login, foto profil, ganti nama dan password. Email tidak bisa diubah.                                          |
+| Akses bersama | Semua akun memantau dan mengontrol satu akuarium yang sama (default `aquarium-001`).                                        |
+| Tampilan      | Responsif: sidebar di desktop, menu bawah di smartphone.                                                                    |
 
 ## Teknologi
 
-| Bagian         | Teknologi                                        |
-| -------------- | ------------------------------------------------ |
-| Frontend       | React 19, React Router 7, Vite 8, Tailwind CSS 4 |
-| Backend        | Node.js 22, Express 5, Firebase Admin SDK        |
-| Database       | Firebase Cloud Firestore                         |
-| Authentication | JWT (pengguna), device key (ESP32), bcrypt       |
-| Hardware       | ESP32 melalui HTTP REST API                      |
+React 19 + Vite 8 + Tailwind CSS 4 (frontend), Node.js 22 + Express 5 (backend), dan Firebase Cloud Firestore (database). Penjelasan lengkap ada di [docs/architecture.md](docs/architecture.md#teknologi).
 
 ## Menjalankan Secara Lokal
 
@@ -80,6 +83,7 @@ Jangan commit file `.env`, `serviceAccountKey.json`, atau `.dev-jwt-secret` (sud
 ## Struktur Singkat
 
 ```text
+docs/           Dokumentasi detail (latar belakang, arsitektur, API, backend, database, frontend, integrasi)
 backend/
   config/       Firebase, JWT secret, ID akuarium, data awal akuarium
   middleware/   Autentikasi JWT dan device key
