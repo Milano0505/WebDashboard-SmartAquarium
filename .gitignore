@@ -12,3 +12,6 @@
 *.log
 .DS_Store
 Thumbs.db
+
+# Pengaturan Claude Code pribadi
+.claude/settings.local.json
