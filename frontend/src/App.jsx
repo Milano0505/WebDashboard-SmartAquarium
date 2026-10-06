@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AQUARIUM_ID, getNotifications } from "./api/service";
 import Layout from "./components/Layout";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import useBrowserNotifications from "./hooks/useBrowserNotifications";
+import useUnreadCount from "./hooks/useUnreadCount";
 import ConfigurationPage from "./pages/Configuration";
 import DashboardPage from "./pages/Dashboard";
 import DataHistoryPage from "./pages/DataHistory";
@@ -10,10 +11,7 @@ import LoginPage from "./pages/Login";
 import NotificationsPage from "./pages/Notifications";
 import RegisterPage from "./pages/Register";
 
-function getBrowserNotificationPermission() {
-    if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
-    return window.Notification.permission;
-}
+const NOTICE_DURATION_MS = 5000;
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isAuthLoading } = useAuth();
@@ -24,147 +22,30 @@ function ProtectedRoute({ children }) {
             </div>
         );
     }
-    return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
+    return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
 function AppRoutes() {
     const { user } = useAuth();
-    const [notifCount, setNotifCount] = useState(0);
-    const [systemNotice, setSystemNotice] = useState("");
-    const [browserNotificationPermission, setBrowserNotificationPermission] = useState(
-        getBrowserNotificationPermission,
-    );
-    const [browserNotificationsEnabled, setBrowserNotificationsEnabled] = useState(false);
-    const knownNotificationIds = useRef(null);
     const userId = user?.id || user?.userId;
-    const notificationPreferenceKey = userId ? `sa_browser_notifications:${userId}` : null;
+    const [notifCount, setNotifCount] = useUnreadCount(userId);
+    const browserNotifications = useBrowserNotifications(userId);
+    const [systemNotice, setSystemNotice] = useState("");
 
+    // Toast sukses setelah aksi, hilang otomatis setelah 5 detik
     useEffect(() => {
         if (!systemNotice) return undefined;
-        const timeoutId = window.setTimeout(() => setSystemNotice(""), 5000);
+        const timeoutId = window.setTimeout(() => setSystemNotice(""), NOTICE_DURATION_MS);
         return () => window.clearTimeout(timeoutId);
     }, [systemNotice]);
 
+    // Aksi membuat notifikasi di server, jadi badge unread ikut di-refresh
     const notifySystemChange = message => {
         setSystemNotice(message);
         window.dispatchEvent(new Event("sa:notifications-changed"));
     };
 
-    useEffect(() => {
-        if (!user) {
-            setNotifCount(0);
-            return undefined;
-        }
-
-        let isActive = true;
-        const refreshCount = async () => {
-            try {
-                const { notificationRecords } = await getNotifications(AQUARIUM_ID, { limit: 500 });
-                if (isActive) setNotifCount(notificationRecords.filter(record => !record.isRead).length);
-            } catch (error) {
-                console.warn("Unable to refresh the alert count.", error);
-            }
-        };
-
-        refreshCount();
-        window.addEventListener("sa:notifications-changed", refreshCount);
-        const intervalId = window.setInterval(refreshCount, 10_000);
-        return () => {
-            isActive = false;
-            window.removeEventListener("sa:notifications-changed", refreshCount);
-            window.clearInterval(intervalId);
-        };
-    }, [user?.id]);
-
-    useEffect(() => {
-        try {
-            setBrowserNotificationsEnabled(
-                Boolean(
-                    notificationPreferenceKey &&
-                    localStorage.getItem(notificationPreferenceKey) === "true" &&
-                    getBrowserNotificationPermission() === "granted",
-                ),
-            );
-        } catch {
-            setBrowserNotificationsEnabled(false);
-        }
-    }, [notificationPreferenceKey]);
-
-    const updateBrowserNotifications = async enabled => {
-        if (!enabled) {
-            setBrowserNotificationsEnabled(false);
-            try {
-                if (notificationPreferenceKey) localStorage.setItem(notificationPreferenceKey, "false");
-            } catch (error) {
-                console.warn("Unable to save browser notification preferences.", error);
-            }
-            return "disabled";
-        }
-
-        if (getBrowserNotificationPermission() === "unsupported") return "unsupported";
-
-        let permission = window.Notification.permission;
-        try {
-            if (permission === "default") permission = await window.Notification.requestPermission();
-        } catch (error) {
-            console.warn("Unable to request browser notification permission.", error);
-            return "denied";
-        }
-        setBrowserNotificationPermission(permission);
-        const enabledByPermission = permission === "granted";
-        setBrowserNotificationsEnabled(enabledByPermission);
-        try {
-            if (notificationPreferenceKey) {
-                localStorage.setItem(notificationPreferenceKey, String(enabledByPermission));
-            }
-        } catch (error) {
-            console.warn("Unable to save browser notification preferences.", error);
-        }
-        return permission;
-    };
-
-    useEffect(() => {
-        knownNotificationIds.current = null;
-        if (!browserNotificationsEnabled || browserNotificationPermission !== "granted" || !user) {
-            return undefined;
-        }
-
-        let isActive = true;
-        const checkForNotifications = async () => {
-            try {
-                const { notificationRecords } = await getNotifications(AQUARIUM_ID, { limit: 100 });
-                if (!isActive) return;
-
-                if (knownNotificationIds.current) {
-                    notificationRecords
-                        .filter(record => record.id && !knownNotificationIds.current.has(record.id))
-                        .reverse()
-                        .forEach(record => {
-                            const notification = new window.Notification(record.title || "Smart Aquarium", {
-                                body: record.message || "You have a new aquarium notification.",
-                                tag: record.id,
-                            });
-                            notification.onclick = () => {
-                                window.focus();
-                                window.location.assign("/notifications");
-                                notification.close();
-                            };
-                        });
-                }
-
-                knownNotificationIds.current = new Set(notificationRecords.map(record => record.id));
-            } catch (error) {
-                console.warn("Unable to check for new browser notifications.", error);
-            }
-        };
-
-        checkForNotifications();
-        const intervalId = window.setInterval(checkForNotifications, 15_000);
-        return () => {
-            isActive = false;
-            window.clearInterval(intervalId);
-        };
-    }, [browserNotificationPermission, browserNotificationsEnabled, user?.id]);
+    const dashboard = <DashboardPage onSystemChange={notifySystemChange} />;
 
     return (
         <Routes>
@@ -181,14 +62,8 @@ function AppRoutes() {
                             onDismissSystemNotice={() => setSystemNotice("")}
                         >
                             <Routes>
-                                <Route
-                                    path="/dashboard"
-                                    element={<DashboardPage onSystemChange={notifySystemChange} />}
-                                />
-                                <Route
-                                    path="/dashboard/:tab"
-                                    element={<DashboardPage onSystemChange={notifySystemChange} />}
-                                />
+                                <Route path="/dashboard" element={dashboard} />
+                                <Route path="/dashboard/:tab" element={dashboard} />
                                 <Route path="/history" element={<DataHistoryPage />} />
                                 <Route
                                     path="/notifications"
@@ -201,16 +76,7 @@ function AppRoutes() {
                                 />
                                 <Route
                                     path="/configuration"
-                                    element={
-                                        <ConfigurationPage
-                                            browserNotificationPermission={browserNotificationPermission}
-                                            browserNotificationsEnabled={browserNotificationsEnabled}
-                                            browserNotificationsSupported={
-                                                browserNotificationPermission !== "unsupported"
-                                            }
-                                            onBrowserNotificationsChange={updateBrowserNotifications}
-                                        />
-                                    }
+                                    element={<ConfigurationPage browserNotifications={browserNotifications} />}
                                 />
                                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
                             </Routes>

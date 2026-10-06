@@ -7,6 +7,7 @@ if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET must be configured in production.");
 }
 
+// Khusus development: secret acak dibuat sekali dan disimpan di .dev-jwt-secret
 function getDevelopmentSecret() {
     const secretPath = resolve(process.cwd(), ".dev-jwt-secret");
     if (existsSync(secretPath)) return readFileSync(secretPath, "utf8").trim();

@@ -1,3 +1,5 @@
+// Data awal akuarium, dibuat saat register/login pertama
+// hardwareInfo dan realtimeState nanti diisi oleh ESP32
 export function createDefaultAquarium(userId) {
     return {
         userId,
@@ -38,10 +40,12 @@ export function createDefaultAquarium(userId) {
         feederConfig: {
             mode: "MANUAL",
             schedules: [],
+            lastTriggeredAt: null,
         },
         systemConfig: {
             pollFrequency: 5,
             timezone: "Asia/Manila",
         },
+        lightingUsage: {},
     };
 }

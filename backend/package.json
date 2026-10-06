@@ -6,7 +6,8 @@
     "type": "module",
     "scripts": {
         "start": "node index.js",
-        "dev": "nodemon index.js"
+        "dev": "nodemon index.js",
+        "format": "prettier --write \"**/*.js\""
     },
     "keywords": [],
     "author": "",
@@ -20,7 +21,8 @@
         "jsonwebtoken": "^9.0.3"
     },
     "devDependencies": {
-        "nodemon": "^3.1.14"
+        "nodemon": "^3.1.14",
+        "prettier": "^3.9.9"
     },
     "allowScripts": {
         "@firebase/util@1.15.3": true,

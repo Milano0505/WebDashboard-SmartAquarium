@@ -1,15 +1,34 @@
 import { Router } from "express";
-import { AQUARIUM_ID } from "../config/aquarium.js";
+import { findAquarium } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { configRules, validateTemperatureRange } from "../utils/config-validation.js";
+import { badRequest } from "../utils/errors.js";
 import { serializeFirestore } from "../utils/firestore.js";
+import { notificationsRef, sharedNotification } from "../utils/notifications.js";
 
 const router = Router();
 router.use(requireAuth);
-const temperatureFields = ["unit", "targetTemp", "minTempThreshold", "maxTempThreshold", "mode", "manualControlState"];
-const lightingFields = ["mode", "manualControlState", "schedule", "avgHoursOn", "avgHoursOff"];
-const feederFields = ["mode", "schedules"];
-const systemFields = ["unit", "pollFrequency", "timezone"];
+
+const { FieldValue, Timestamp } = admin.firestore;
+const NOT_FOUND = { message: "Aquarium was not found." };
+
+const FIELD_LABELS = {
+    targetTemp: "target temperature",
+    minTempThreshold: "minimum temperature threshold",
+    maxTempThreshold: "maximum temperature threshold",
+    pollFrequency: "sensor poll interval",
+    manualControlState: "manual control state",
+};
+
+const SECTION_TITLES = {
+    tempConfig: "Temperature settings updated",
+    lightingConfig: "Lighting settings updated",
+    feederConfig: "Feeder settings updated",
+    systemConfig: "System settings updated",
+};
+
+// ---------- Fungsi bantu ----------
 
 function parseLimit(value, fallback, maximum = 500) {
     if (value === undefined || value === "") return fallback;
@@ -20,141 +39,116 @@ function parseLimit(value, fallback, maximum = 500) {
 function parseDate(value) {
     if (value === undefined || value === "") return null;
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : admin.firestore.Timestamp.fromDate(date);
+    return Number.isNaN(date.getTime()) ? null : Timestamp.fromDate(date);
 }
 
-function fieldLabel(field) {
-    const labels = {
-        targetTemp: "target temperature",
-        minTempThreshold: "minimum temperature threshold",
-        maxTempThreshold: "maximum temperature threshold",
-        pollFrequency: "sensor poll interval",
-        manualControlState: "manual control state",
-    };
-    return labels[field] || field.replace(/[A-Z]/g, character => ` ${character.toLowerCase()}`);
+async function actorName(userId) {
+    const user = await db.collection("users").doc(userId).get();
+    return user.get("fullName") || "A user";
 }
 
-function fieldValue(field, value, aquarium) {
+// Satuan suhu diubah dari tab System, tapi disimpan di tempConfig
+function fieldPath(section, field) {
+    return section === "systemConfig" && field === "unit" ? "tempConfig.unit" : `${section}.${field}`;
+}
+
+function valueAt(data, path) {
+    return path.split(".").reduce((object, key) => object?.[key], data);
+}
+
+function describeField(field) {
+    return FIELD_LABELS[field] || field.replace(/[A-Z]/g, character => ` ${character.toLowerCase()}`);
+}
+
+// Nilai yang mudah dibaca untuk pesan notifikasi perubahan
+function describeValue(field, value, aquarium) {
     if (field.toLowerCase().includes("temp") && typeof value === "number") {
-        if (aquarium.tempConfig?.unit === "Fahrenheit") {
-            return `${+((value * 9) / 5 + 32).toFixed(1)}°F`;
-        }
-        return `${value}°C`;
+        return aquarium.tempConfig?.unit === "Fahrenheit" ? `${+((value * 9) / 5 + 32).toFixed(1)}°F` : `${value}°C`;
     }
-    if (field === "pollFrequency" && typeof value === "number") return `${value} seconds`;
-    return value && typeof value === "object" ? JSON.stringify(value) : String(value);
+    if (field === "pollFrequency") return `${value} seconds`;
+    if (field === "schedule")
+        return `${value.startTime} - ${value.endTime} (${value.isActive ? "active" : "inactive"})`;
+    if (field === "schedules") {
+        const active = value.filter(entry => entry.isActive).map(entry => entry.time);
+        return active.length > 0 ? active.join(", ") : "no active feeding times";
+    }
+    return String(value);
 }
 
-function sectionTitle(section) {
-    const titles = {
-        tempConfig: "Temperature settings updated",
-        lightingConfig: "Lighting settings updated",
-        feederConfig: "Feeder settings updated",
-        systemConfig: "System settings updated",
-    };
-    return titles[section] || "Aquarium settings updated";
-}
+// Validasi PATCH config, simpan field yang berubah saja, lalu buat notifikasi
+function patchConfig(section, successMessage) {
+    const rules = configRules[section];
 
-async function ownedAquarium(req, res) {
-    if (req.params.aquariumId !== AQUARIUM_ID) {
-        res.status(404).json({ message: "Aquarium was not found." });
-        return null;
-    }
-    const reference = db.collection("aquariums").doc(req.params.aquariumId);
-    const snapshot = await reference.get();
-    if (!snapshot.exists) {
-        res.status(404).json({ message: "Aquarium was not found." });
-        return null;
-    }
-    return { reference, data: snapshot.data() };
-}
-
-function patchConfig(section, allowedFields, message) {
     return async (req, res) => {
-        const entries = Object.entries(req.body);
-        if (entries.length === 0) return res.status(400).json({ message: "A configuration update is required." });
-        if (entries.some(([key]) => !allowedFields.includes(key))) {
-            return res.status(400).json({
-                message: "The request contains unsupported configuration fields.",
-            });
+        const rawEntries = Object.entries(req.body);
+        if (rawEntries.length === 0) throw badRequest("A configuration update is required.");
+        if (rawEntries.some(([field]) => !Object.hasOwn(rules, field))) {
+            throw badRequest("The request contains unsupported configuration fields.");
         }
-        const aquarium = await ownedAquarium(req, res);
-        if (!aquarium) return;
-        const changedEntries = entries.filter(
-            ([key, value]) =>
-                JSON.stringify(
-                    section === "systemConfig" && key === "unit"
-                        ? aquarium.data.tempConfig?.unit
-                        : aquarium.data[section]?.[key],
-                ) !== JSON.stringify(value),
+        const entries = rawEntries.map(([field, value]) => [field, rules[field](value)]);
+
+        const aquarium = await findAquarium(req.params.aquariumId);
+        if (!aquarium) return res.status(404).json(NOT_FOUND);
+        if (section === "tempConfig") {
+            validateTemperatureRange({ ...aquarium.data.tempConfig, ...Object.fromEntries(entries) });
+        }
+
+        const changed = entries.filter(
+            ([field, value]) =>
+                JSON.stringify(valueAt(aquarium.data, fieldPath(section, field))) !== JSON.stringify(value),
         );
-        if (changedEntries.length === 0) {
+        if (changed.length === 0) {
             return res.json({ updatedAt: new Date().toISOString(), message: "No configuration changes detected." });
         }
-        const actor = await db.collection("users").doc(req.auth.userId).get();
-        const actorName = actor.get("fullName") || "A user";
-        const changes = changedEntries
-            .map(([key, value]) => `${fieldLabel(key)} to ${fieldValue(key, value, aquarium.data)}`)
-            .join(" and ");
-        const timestamp = admin.firestore.FieldValue.serverTimestamp();
-        const batch = db.batch();
+
+        const updates = Object.fromEntries(changed.map(([field, value]) => [fieldPath(section, field), value]));
+        updates.updatedAt = FieldValue.serverTimestamp();
         if (section === "systemConfig") {
-            const updates = Object.fromEntries(
-                changedEntries.map(([key, value]) => [key === "unit" ? "tempConfig.unit" : `${section}.${key}`, value]),
-            );
-            updates["systemConfig.unit"] = admin.firestore.FieldValue.delete();
-            updates["systemConfig.emailAlerts"] = admin.firestore.FieldValue.delete();
-            updates["systemConfig.smsAlerts"] = admin.firestore.FieldValue.delete();
-            updates.updatedAt = timestamp;
-            batch.update(aquarium.reference, updates);
-        } else {
-            const updates = Object.fromEntries(changedEntries.map(([key, value]) => [`${section}.${key}`, value]));
-            updates.updatedAt = timestamp;
-            batch.update(aquarium.reference, updates);
+            // Hapus field versi lama (systemConfig.unit, toggle email/SMS)
+            updates["systemConfig.unit"] = FieldValue.delete();
+            updates["systemConfig.emailAlerts"] = FieldValue.delete();
+            updates["systemConfig.smsAlerts"] = FieldValue.delete();
         }
-        batch.create(aquarium.reference.collection("notifications").doc(), {
-            userid: null,
-            userId: req.auth.userId,
-            aquariumId: req.params.aquariumId,
-            actorName,
-            scope: "aquarium",
-            title: sectionTitle(section),
-            message: `${actorName} changed ${changes}.`,
-            type: "info",
-            isRead: false,
-            readBy: [],
-            dismissedBy: [],
-            timestamp,
-        });
+
+        const name = await actorName(req.auth.userId);
+        const changes = changed
+            .map(([field, value]) => `${describeField(field)} to ${describeValue(field, value, aquarium.data)}`)
+            .join(" and ");
+
+        const batch = db.batch();
+        batch.update(aquarium.reference, updates);
+        batch.create(
+            notificationsRef().doc(),
+            sharedNotification({
+                actorId: req.auth.userId,
+                actorName: name,
+                title: SECTION_TITLES[section],
+                message: `${name} changed ${changes}.`,
+            }),
+        );
         await batch.commit();
-        return res.json({ updatedAt: new Date().toISOString(), message });
+        return res.json({ updatedAt: new Date().toISOString(), message: successMessage });
     };
 }
 
-async function telemetryRecords(aquariumId, query) {
+async function telemetryRecords(aquariumReference, query) {
     const limit = parseLimit(query.limit, 40);
-    if (limit === null)
-        throw Object.assign(new Error("Limit must be a positive integer."), {
-            status: 400,
-        });
+    if (limit === null) throw badRequest("Limit must be a positive integer.");
     const startDate = parseDate(query.startDate);
     const endDate = parseDate(query.endDate);
     if ((query.startDate && !startDate) || (query.endDate && !endDate)) {
-        throw Object.assign(new Error("Date filters must be valid dates."), {
-            status: 400,
-        });
+        throw badRequest("Date filters must be valid dates.");
     }
     if (startDate && endDate && startDate.toMillis() > endDate.toMillis()) {
-        throw Object.assign(new Error("startDate must be before endDate."), {
-            status: 400,
-        });
+        throw badRequest("startDate must be before endDate.");
     }
 
-    const collection = db.collection("aquariums").doc(aquariumId).collection("telemetry_history");
-    let request = collection.orderBy("timestamp", "desc");
+    let request = aquariumReference.collection("telemetry_history").orderBy("timestamp", "desc");
     if (startDate) request = request.where("timestamp", ">=", startDate);
     if (endDate) request = request.where("timestamp", "<=", endDate);
     const snapshot = await request.limit(limit).get();
+
+    // Lewati dokumen yang tidak lengkap
     return snapshot.docs
         .map(document => ({ id: document.id, ...document.data() }))
         .filter(
@@ -167,162 +161,156 @@ async function telemetryRecords(aquariumId, query) {
         .map(serializeFirestore);
 }
 
+// Escape sel CSV dan cegah formula spreadsheet (=, +, -, @)
 function csvCell(value) {
     let text = value === null || value === undefined ? "" : String(value);
     if (/^[\s]*[=+\-@]/.test(text)) text = `'${text}`;
     return `"${text.replaceAll('"', '""')}"`;
 }
 
+// Status dibaca: readBy per user untuk notifikasi bersama, isRead untuk privat
+function isReadBy(notification, userId) {
+    return notification.scope === "user"
+        ? Boolean(notification.isRead)
+        : (notification.readBy || []).includes(userId) || Boolean(notification.isRead);
+}
+
+function isVisibleTo(notification, userId) {
+    if (notification.scope === "user") return notification.userid === userId;
+    return !(notification.dismissedBy || []).includes(userId);
+}
+
+async function findNotification(req) {
+    const reference = notificationsRef().doc(req.params.notificationId);
+    const snapshot = await reference.get();
+    if (!snapshot.exists || !isVisibleTo(snapshot.data(), req.auth.userId)) return null;
+    return { reference, data: snapshot.data() };
+}
+
+// ---------- Akuarium & konfigurasi ----------
+
 router.get("/:aquariumId", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    const { systemConfig, ...aquariumData } = aquarium.data;
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+    const { systemConfig, ...data } = aquarium.data;
     return res.json(
         serializeFirestore({
-            ...aquariumData,
+            ...data,
             systemConfig: { pollFrequency: systemConfig?.pollFrequency, timezone: systemConfig?.timezone },
         }),
     );
 });
 
-router.patch(
-    "/:aquariumId/temperature-config",
-    patchConfig("tempConfig", temperatureFields, "Temperature config updated."),
-);
-router.patch("/:aquariumId/lighting-config", patchConfig("lightingConfig", lightingFields, "Lighting config updated."));
-router.patch("/:aquariumId/feeder-config", patchConfig("feederConfig", feederFields, "Feeder config updated."));
-router.patch("/:aquariumId/system-config", patchConfig("systemConfig", systemFields, "System config updated."));
+router.patch("/:aquariumId/temperature-config", patchConfig("tempConfig", "Temperature config updated."));
+router.patch("/:aquariumId/lighting-config", patchConfig("lightingConfig", "Lighting config updated."));
+router.patch("/:aquariumId/feeder-config", patchConfig("feederConfig", "Feeder config updated."));
+router.patch("/:aquariumId/system-config", patchConfig("systemConfig", "System config updated."));
 
 router.post("/:aquariumId/feeder/trigger", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (aquarium.data.feederConfig?.mode !== "MANUAL") {
-        return res.status(409).json({
-            message: "Switch the feeder to manual mode before triggering it.",
-        });
+        return res.status(409).json({ message: "Switch the feeder to manual mode before triggering it." });
     }
 
-    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    const name = await actorName(req.auth.userId);
     const batch = db.batch();
-    batch.update(aquarium.reference, {
-        "realtimeState.feederStatus": "Active",
-        "realtimeState.lastUpdated": timestamp,
-    });
-    const notificationRef = aquarium.reference.collection("notifications").doc();
-    const actor = await db.collection("users").doc(req.auth.userId).get();
-    const actorName = actor.get("fullName") || "A user";
-    batch.set(notificationRef, {
-        userid: null,
-        userId: req.auth.userId,
-        aquariumId: req.params.aquariumId,
-        actorName,
-        scope: "aquarium",
-        title: "Feeder Activated",
-        message: `${actorName} triggered the feeder manually.`,
-        type: "info",
-        isRead: false,
-        readBy: [],
-        dismissedBy: [],
-        timestamp,
-    });
+    // Hanya mencatat perintah; ESP32 memberi pakan sekali setiap lastTriggeredAt berubah.
+    // realtimeState tidak diubah karena hanya boleh diisi telemetry perangkat
+    batch.update(aquarium.reference, { "feederConfig.lastTriggeredAt": FieldValue.serverTimestamp() });
+    batch.create(
+        notificationsRef().doc(),
+        sharedNotification({
+            actorId: req.auth.userId,
+            actorName: name,
+            title: "Feed Command Sent",
+            message: `${name} sent a manual feed command.`,
+        }),
+    );
     await batch.commit();
-    return res.json({
-        status: "triggered",
-        message: "Feeder triggered successfully.",
-    });
+    return res.json({ status: "triggered", message: "Feed command sent." });
 });
 
-router.get("/:aquariumId/telemetry/export", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    if (req.query.format && req.query.format !== "csv") {
-        return res.status(400).json({ message: "Only CSV export is supported." });
-    }
+// ---------- Telemetry ----------
 
-    const records = await telemetryRecords(req.params.aquariumId, {
-        ...req.query,
-        limit: req.query.limit || 500,
-    });
+router.get("/:aquariumId/telemetry/export", async (req, res) => {
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+    if (req.query.format && req.query.format !== "csv") throw badRequest("Only CSV export is supported.");
+
+    const records = await telemetryRecords(aquarium.reference, { ...req.query, limit: req.query.limit || 500 });
     const fields = ["timestamp", "temp", "heaterState", "ledState", "feederState", "event"];
     const csv = [fields, ...records.map(record => fields.map(field => record[field]))]
         .map(row => row.map(csvCell).join(","))
         .join("\r\n");
-    const filename = `telemetry-${new Date().toISOString().slice(0, 10)}.csv`;
+
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="telemetry-${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
     return res.send(csv);
 });
 
 router.get("/:aquariumId/telemetry", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    const records = await telemetryRecords(req.params.aquariumId, req.query);
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+    const records = await telemetryRecords(aquarium.reference, req.query);
     return res.json({ telemetryRecords: records, total: records.length });
 });
 
+// ---------- Notifikasi ----------
+
 router.get("/:aquariumId/notifications", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
 
     const limit = parseLimit(req.query.limit, 100);
-    if (limit === null) return res.status(400).json({ message: "Limit must be a positive integer." });
-    const readStatus = req.query.readStatus;
+    if (limit === null) throw badRequest("Limit must be a positive integer.");
+    const { readStatus } = req.query;
     if (readStatus && !["read", "unread"].includes(readStatus)) {
-        return res.status(400).json({ message: 'readStatus must be "read" or "unread".' });
+        throw badRequest('readStatus must be "read" or "unread".');
     }
 
-    const snapshot = await aquarium.reference
-        .collection("notifications")
+    // Ambil lebih banyak karena sebagian akan disaring per user
+    const snapshot = await notificationsRef()
         .orderBy("timestamp", "desc")
         .limit(limit * 5)
         .get();
+    const userId = req.auth.userId;
     const notificationRecords = snapshot.docs
         .map(document => {
             const data = document.data();
             const scope = data.scope === "user" ? "user" : "aquarium";
-            if (scope === "user" && data.userid !== req.auth.userId) return null;
-            return {
-                id: document.id,
-                ...data,
-                userId: data.userId ?? null,
-                userid: data.userid ?? null,
-                aquariumId: data.aquariumId || AQUARIUM_ID,
-                scope,
-                isRead:
-                    scope === "user"
-                        ? Boolean(data.isRead)
-                        : (data.readBy || []).includes(req.auth.userId) || Boolean(data.isRead),
-            };
+            return { id: document.id, ...data, scope, userId: data.userId ?? null, userid: data.userid ?? null };
         })
-        .filter(
-            notification =>
-                notification &&
-                !(notification.dismissedBy || []).includes(req.auth.userId) &&
-                (!readStatus || notification.isRead === (readStatus === "read")),
-        )
-        .sort((first, second) => (second.timestamp?.toMillis?.() || 0) - (first.timestamp?.toMillis?.() || 0))
+        .filter(notification => isVisibleTo(notification, userId))
+        .map(notification => ({ ...notification, isRead: isReadBy(notification, userId) }))
+        .filter(notification => !readStatus || notification.isRead === (readStatus === "read"))
         .slice(0, limit)
         .map(serializeFirestore);
     return res.json({ notificationRecords });
 });
 
 router.patch("/:aquariumId/notifications/read-all", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    const snapshot = await aquarium.reference.collection("notifications").where("isRead", "==", false).get();
+    const aquarium = await findAquarium(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+
+    const userId = req.auth.userId;
+    const snapshot = await notificationsRef().where("isRead", "==", false).get();
     const unread = snapshot.docs.filter(document => {
         const data = document.data();
-        if (data.scope === "user") return data.userid === req.auth.userId;
-        return !(data.readBy || []).includes(req.auth.userId) && !(data.dismissedBy || []).includes(req.auth.userId);
+        return isVisibleTo(data, userId) && !isReadBy(data, userId);
     });
+
+    // Batas batch Firestore 500 operasi
     for (let offset = 0; offset < unread.length; offset += 450) {
         const batch = db.batch();
         unread.slice(offset, offset + 450).forEach(document => {
-            if (document.get("scope") === "user") {
-                batch.update(document.ref, { isRead: true });
-            } else {
-                batch.update(document.ref, { readBy: admin.firestore.FieldValue.arrayUnion(req.auth.userId) });
-            }
+            batch.update(
+                document.ref,
+                document.get("scope") === "user" ? { isRead: true } : { readBy: FieldValue.arrayUnion(userId) },
+            );
         });
         await batch.commit();
     }
@@ -330,35 +318,26 @@ router.patch("/:aquariumId/notifications/read-all", async (req, res) => {
 });
 
 router.patch("/:aquariumId/notifications/:notificationId/read", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    const notificationRef = aquarium.reference.collection("notifications").doc(req.params.notificationId);
-    const notification = await notificationRef.get();
-    if (!notification.exists) return res.status(404).json({ message: "Notification was not found." });
-    if (notification.get("scope") === "user" && notification.get("userid") !== req.auth.userId) {
-        return res.status(404).json({ message: "Notification was not found." });
-    }
-    if (notification.get("scope") === "user") {
-        await notificationRef.update({ isRead: true });
-    } else {
-        await notificationRef.update({ readBy: admin.firestore.FieldValue.arrayUnion(req.auth.userId) });
-    }
+    if (!(await findAquarium(req.params.aquariumId))) return res.status(404).json(NOT_FOUND);
+    const notification = await findNotification(req);
+    if (!notification) return res.status(404).json({ message: "Notification was not found." });
+
+    await notification.reference.update(
+        notification.data.scope === "user" ? { isRead: true } : { readBy: FieldValue.arrayUnion(req.auth.userId) },
+    );
     return res.json({ message: "Notification marked as read." });
 });
 
 router.delete("/:aquariumId/notifications/:notificationId", async (req, res) => {
-    const aquarium = await ownedAquarium(req, res);
-    if (!aquarium) return;
-    const notificationRef = aquarium.reference.collection("notifications").doc(req.params.notificationId);
-    const notification = await notificationRef.get();
-    if (!notification.exists) return res.status(404).json({ message: "Notification was not found." });
-    if (notification.get("scope") === "user" && notification.get("userid") !== req.auth.userId) {
-        return res.status(404).json({ message: "Notification was not found." });
-    }
-    if (notification.get("scope") === "user") {
-        await notificationRef.delete();
+    if (!(await findAquarium(req.params.aquariumId))) return res.status(404).json(NOT_FOUND);
+    const notification = await findNotification(req);
+    if (!notification) return res.status(404).json({ message: "Notification was not found." });
+
+    // Notifikasi privat dihapus; notifikasi bersama hanya disembunyikan untuk user ini
+    if (notification.data.scope === "user") {
+        await notification.reference.delete();
     } else {
-        await notificationRef.update({ dismissedBy: admin.firestore.FieldValue.arrayUnion(req.auth.userId) });
+        await notification.reference.update({ dismissedBy: FieldValue.arrayUnion(req.auth.userId) });
     }
     return res.json({ message: "Notification deleted." });
 });
