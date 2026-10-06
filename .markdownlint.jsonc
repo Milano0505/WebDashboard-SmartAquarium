@@ -1,0 +1,7 @@
+// Disesuaikan dengan Prettier (.prettierrc.json) yang merapikan semua file Markdown
+{
+    // Prettier memakai indentasi 4 spasi untuk daftar bersarang
+    "MD007": { "indent": 4 },
+    // Tabel tidak bisa dipendekkan ke 80 karakter; panjang baris diatur Prettier
+    "MD013": false,
+}
