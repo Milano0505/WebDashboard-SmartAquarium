@@ -325,6 +325,7 @@ Yang dilakukan server:
 1. Memperbarui `realtimeState` (termasuk `lastUpdated`) dan menyimpan satu data baru di `telemetry_history`.
 2. Memperbarui statistik lampu (`lightingUsage`, `avgHoursOn`, `avgHoursOff`).
 3. Membuat notifikasi "Temperature Alert" jika suhu **baru saja** keluar dari batas `minTempThreshold`–`maxTempThreshold`. Selama suhu masih di luar batas, alert tidak dibuat berulang.
+4. Jika sebelumnya perangkat dinyatakan offline, membuat notifikasi "Device Back Online" dan mereset penanda offline (lihat [backend.md](backend.md#pemeriksaan-perangkat-offline)).
 
 Respons `201 { "status": "received", "timestamp": "…" }`.
 

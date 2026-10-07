@@ -71,10 +71,10 @@ Urutan ini penting. Dashboard menganggap perintah Feed Now selesai saat menerima
 
 Aturan yang dipakai bersama oleh backend dan frontend:
 
-| Aturan            | Definisi                                                                   | Dipakai di                                                                 |
-| ----------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Perangkat offline | Tidak ada data lebih dari maks(120 detik, 3 × `pollFrequency`)             | `routes/hardware.js` (statistik lampu), `Dashboard.jsx` (`isDeviceOnline`) |
-| Feed Now menunggu | `feederConfig.lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` | `Dashboard.jsx` (`isFeedPending`)                                          |
+| Aturan            | Definisi                                                                   | Dipakai di                                                                                    |
+| ----------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Perangkat offline | Tidak ada data lebih dari maks(120 detik, 3 × `pollFrequency`)             | `utils/device-status.js` (statistik lampu dan notifikasi), `Dashboard.jsx` (`isDeviceOnline`) |
+| Feed Now menunggu | `feederConfig.lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` | `Dashboard.jsx` (`isFeedPending`)                                                             |
 
 Cara menghubungkan ESP32 sungguhan dan contoh kode penghubungnya ada di [esp32-connection.md](esp32-connection.md). Tanpa ESP32, perangkat bisa **disimulasikan** dengan API client yang mengirim request di atas (lihat [backend.md](backend.md#demonstrasi), langkah 5).
 

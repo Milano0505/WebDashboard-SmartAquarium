@@ -58,6 +58,7 @@ Hubungan antar-data:
 | `userId`         | string    | Pengguna yang pertama kali membuat dokumen ini                                                |
 | `hardwareInfo`   | object    | `microcontroller`, `tempSensor`, `lighting`, `feeder`, `firmwareVersion` (belum diisi sistem) |
 | `realtimeState`  | object    | Status **nyata** perangkat (lihat di bawah)                                                   |
+| `deviceMonitor`  | object    | Penanda notifikasi offline (lihat di bawah); belum ada di dokumen lama, dianggap `false`      |
 | `tempConfig`     | object    | Pengaturan heater dan batas suhu aman                                                         |
 | `lightingConfig` | object    | Pengaturan lampu, jadwal, dan statistik pemakaian                                             |
 | `feederConfig`   | object    | Pengaturan pemberi pakan dan perintah Feed Now                                                |
@@ -76,6 +77,14 @@ Hubungan antar-data:
 | `lastUpdated`  | timestamp / null | Waktu data terakhir dari perangkat; `null` jika belum pernah ada |
 
 **Hanya diisi oleh endpoint telemetry perangkat.** Tombol di dashboard tidak pernah mengubahnya.
+
+### `deviceMonitor`
+
+| Field             | Tipe    | Keterangan                                                                                           |
+| ----------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `offlineNotified` | boolean | `true` setelah server membuat notifikasi "Device Offline"; kembali `false` saat telemetry masuk lagi |
+
+Diisi oleh pemeriksaan berkala di `utils/device-status.js` (menjadi `true`) dan endpoint telemetry (menjadi `false`). Penanda ini dipisahkan dari `realtimeState` agar `realtimeState` tetap hanya berisi data dari perangkat.
 
 ### `tempConfig`
 

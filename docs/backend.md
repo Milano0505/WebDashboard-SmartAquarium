@@ -40,6 +40,7 @@ backend/
     config-validation.js  Aturan pemeriksaan setiap field pengaturan
     errors.js             badRequest() untuk membuat error 400
     firestore.js          Mengubah Timestamp Firestore menjadi string ISO
+    device-status.js      Batas offline perangkat dan pemeriksaan berkala "Device Offline"
     notifications.js      Membuat dokumen notifikasi bersama dan privat
     profile-photo.js      Memeriksa URL foto profil
 ```
@@ -71,6 +72,7 @@ Jika terjadi error di langkah mana pun, **error handler** di `index.js` mengirim
 | `telemetryRecords`, `csvCell`                                      | `routes/aquariums.js`        | Mengambil riwayat dengan filter tanggal dan membuat CSV yang aman dibuka di spreadsheet. |
 | `isVisibleTo`, `isReadBy`                                          | `routes/aquariums.js`        | Menentukan notifikasi mana yang terlihat dan sudah dibaca oleh tiap pengguna.            |
 | `lightingUsageUpdate`                                              | `routes/hardware.js`         | Mencatat lama lampu menyala per hari dan menghitung `avgHoursOn` / `avgHoursOff`.        |
+| `offlineThresholdSeconds`, `startDeviceWatchdog`                   | `utils/device-status.js`     | Batas diam perangkat dan pemeriksaan berkala yang membuat notifikasi "Device Offline".   |
 | `configRules`, `validateTemperatureRange`, `scheduleDurationHours` | `utils/config-validation.js` | Aturan setiap field pengaturan dan perhitungan durasi jadwal lampu.                      |
 | `sharedNotification`, `privateNotification`                        | `utils/notifications.js`     | Membuat dokumen notifikasi dengan struktur yang selalu sama.                             |
 
@@ -78,18 +80,30 @@ Jika terjadi error di langkah mana pun, **error handler** di `index.js` mengirim
 
 Backend membuat dokumen notifikasi di Firestore; frontend menampilkannya di halaman Alerts dan sebagai browser notification (lihat [frontend.md](frontend.md#notifikasi-di-browser)).
 
-| Kejadian                                                     | Judul                                                 | Jenis   | Cakupan |
-| ------------------------------------------------------------ | ----------------------------------------------------- | ------- | ------- |
-| Suhu keluar dari batas aman (hanya sekali saat mulai keluar) | `Temperature Alert`                                   | `alert` | Bersama |
-| Pengaturan suhu/lampu/pakan/sistem diubah                    | `Temperature/Lighting/Feeder/System settings updated` | `info`  | Bersama |
-| Perintah Feed Now dikirim                                    | `Feed Command Sent`                                   | `info`  | Bersama |
-| Profil diubah                                                | `Profile updated`                                     | `info`  | Privat  |
-| Password diubah                                              | `Password updated`                                    | `info`  | Privat  |
+| Kejadian                                                     | Judul                                                 | Jenis     | Cakupan |
+| ------------------------------------------------------------ | ----------------------------------------------------- | --------- | ------- |
+| Suhu keluar dari batas aman (hanya sekali saat mulai keluar) | `Temperature Alert`                                   | `alert`   | Bersama |
+| Perangkat berhenti mengirim data (hanya sekali)              | `Device Offline`                                      | `alert`   | Bersama |
+| Perangkat mengirim data lagi setelah offline                 | `Device Back Online`                                  | `success` | Bersama |
+| Pengaturan suhu/lampu/pakan/sistem diubah                    | `Temperature/Lighting/Feeder/System settings updated` | `info`    | Bersama |
+| Perintah Feed Now dikirim                                    | `Feed Command Sent`                                   | `info`    | Bersama |
+| Profil diubah                                                | `Profile updated`                                     | `info`    | Privat  |
+| Password diubah                                              | `Password updated`                                    | `info`    | Privat  |
 
 - **Bersama**: terlihat oleh semua pengguna. Status dibaca dan dihapus dicatat per pengguna.
 - **Privat**: hanya terlihat oleh pengguna yang bersangkutan.
 
 Struktur dokumennya ada di [database.md](database.md#aquariumsaquariumidnotificationsautoid).
+
+### Pemeriksaan perangkat offline
+
+Perangkat yang offline tidak mengirim request, sehingga endpoint telemetry tidak bisa mendeteksinya. Karena itu `index.js` menjalankan `startDeviceWatchdog()` setelah server aktif:
+
+1. Setiap 30 detik, server membaca dokumen akuarium dalam satu transaksi.
+2. Jika `realtimeState.lastUpdated` lebih lama dari maks(120 detik, 3 × `pollFrequency`) dan `deviceMonitor.offlineNotified` belum `true`, server membuat notifikasi **Device Offline** dan mengisi penanda itu menjadi `true`. Penanda mencegah notifikasi berulang, termasuk setelah backend dijalankan ulang.
+3. Saat telemetry berikutnya diterima, endpoint telemetry membuat notifikasi **Device Back Online** dan mengembalikan penanda menjadi `false`.
+
+Perangkat yang belum pernah mengirim data (`lastUpdated` kosong) tidak dianggap offline. Pemeriksaan ini berjalan di dalam proses backend, jadi backend harus berjalan terus-menerus (bukan fungsi serverless yang tidur).
 
 ## Keamanan
 

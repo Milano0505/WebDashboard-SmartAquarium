@@ -21,6 +21,6 @@ Firmware tidak ada di repo ini; ESP32 hanya dilihat sebagai klien API.
 ## Aturan yang harus dijaga
 
 - **`realtimeState` hanya ditulis oleh endpoint telemetry.** Route dashboard (termasuk Feed Now) tidak boleh mengubahnya; Feed Now hanya mengisi `feederConfig.lastTriggeredAt`.
-- **Offline** = tidak ada telemetry lebih dari maks(120 detik, 3 × `pollFrequency`). Dipakai di `hardware.js` (statistik lampu) dan `Dashboard.jsx` (`isDeviceOnline`); keduanya harus sama.
+- **Offline** = tidak ada telemetry lebih dari maks(120 detik, 3 × `pollFrequency`). Dihitung oleh `offlineThresholdSeconds()` di `utils/device-status.js` (statistik lampu di `hardware.js` dan notifikasi "Device Offline") dan oleh `Dashboard.jsx` (`isDeviceOnline`); keduanya harus sama.
 - **Feed Now menunggu** = `lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` (`isFeedPending` di Dashboard). Ini bergantung pada urutan perangkat: baca pengaturan → jalankan → kirim telemetry.
 - Format jam jadwal tetap `hh:mm AM/PM`.
