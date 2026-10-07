@@ -15,3 +15,6 @@ Thumbs.db
 
 # Pengaturan Claude Code pribadi
 .claude/settings.local.json
+
+# Pengaturan editor lokal
+.vscode/
