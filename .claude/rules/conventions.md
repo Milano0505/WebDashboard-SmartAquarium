@@ -8,12 +8,12 @@
 
 ## Bahasa
 
-| Bagian                                    | Bahasa    |
-| ----------------------------------------- | --------- |
-| Komentar kode                             | Indonesia |
-| Teks UI dan pesan error API               | Inggris   |
-| README.md, docs/                          | Indonesia |
-| Pesan commit                              | Inggris   |
+| Bagian                      | Bahasa    |
+| --------------------------- | --------- |
+| Komentar kode               | Indonesia |
+| Teks UI dan pesan error API | Inggris   |
+| README.md, docs/            | Indonesia |
+| Pesan commit                | Inggris   |
 
 ## Dokumentasi
 
@@ -28,10 +28,11 @@ Setiap informasi hanya ditulis di **satu** dokumen; dokumen lain cukup menautkan
 | Koleksi atau field Firestore, query                          | `docs/database.md`                        |
 | Halaman, pembaruan otomatis, status perangkat di tampilan    | `docs/frontend.md`                        |
 | Alur frontend → backend → database, kontrak dengan perangkat | `docs/integrations.md`                    |
+| Cara menghubungkan ESP32, contoh kode penghubung firmware    | `docs/esp32-connection.md`                |
 | Fitur, cara menjalankan, variabel environment                | `README.md`                               |
 | Konteks atau aturan untuk Claude                             | `.claude/CLAUDE.md` atau `.claude/rules/` |
 
-- Dokumentasi hanya membahas **sistem web**; jangan menambahkan detail perangkat keras atau firmware.
+- Dokumentasi hanya membahas **sistem web**; jangan menambahkan detail perangkat keras atau firmware. Pengecualian: `docs/esp32-connection.md` boleh berisi kode firmware, tetapi **hanya kode penghubung** ke API (Wi-Fi, baca config, kirim telemetry), tanpa kode sensor atau aktuator.
 - Tulis dengan bahasa yang sederhana dan jelas: kalimat pendek, jelaskan istilah teknis saat pertama dipakai, utamakan tabel dan langkah bernomor.
 - Rapikan tabel Markdown dengan Prettier (`npx prettier --write <file>.md` dari folder `frontend/`).
 

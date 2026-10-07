@@ -76,20 +76,7 @@ Aturan yang dipakai bersama oleh backend dan frontend:
 | Perangkat offline | Tidak ada data lebih dari maks(120 detik, 3 × `pollFrequency`)             | `routes/hardware.js` (statistik lampu), `Dashboard.jsx` (`isDeviceOnline`) |
 | Feed Now menunggu | `feederConfig.lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` | `Dashboard.jsx` (`isFeedPending`)                                          |
 
-Karena firmware tidak ada di repo, perangkat bisa **disimulasikan** dengan API client yang mengirim request di atas (lihat [backend.md](backend.md#demonstrasi), langkah 5).
-
-## Status integrasi
-
-| Fungsi inti                             | Frontend | Backend | Database | Keterangan                              |
-| --------------------------------------- | :------: | :-----: | :------: | --------------------------------------- |
-| Register, login, logout                 |    ✅    |   ✅    |    ✅    |                                         |
-| Profil dan ganti password               |    ✅    |   ✅    |    ✅    |                                         |
-| Monitoring dan status perangkat         |    ✅    |   ✅    |    ✅    | Data dari perangkat atau simulasi       |
-| Pengaturan heater, lampu, pakan, sistem |    ✅    |   ✅    |    ✅    |                                         |
-| Feed Now                                |    ✅    |   ✅    |    ✅    | Dijalankan oleh perangkat               |
-| Riwayat dan ekspor CSV                  |    ✅    |   ✅    |    ✅    |                                         |
-| Notifikasi dan browser notification     |    ✅    |   ✅    |    ✅    | Browser notification butuh izin browser |
-| Menjalankan heater, lampu, dan pakan    |    –     |   ✅    |    ✅    | Butuh firmware ESP32 (di luar repo)     |
+Cara menghubungkan ESP32 sungguhan dan contoh kode penghubungnya ada di [esp32-connection.md](esp32-connection.md). Tanpa ESP32, perangkat bisa **disimulasikan** dengan API client yang mengirim request di atas (lihat [backend.md](backend.md#demonstrasi), langkah 5).
 
 ## Demonstrasi
 

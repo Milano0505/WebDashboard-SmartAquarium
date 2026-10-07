@@ -5,6 +5,7 @@ paths:
     - "backend/utils/config-validation.js"
     - "frontend/src/pages/Dashboard.jsx"
     - "docs/integrations.md"
+    - "docs/esp32-connection.md"
 ---
 
 # Kontrak API dengan perangkat (ESP32)
@@ -14,7 +15,8 @@ Firmware tidak ada di repo ini; ESP32 hanya dilihat sebagai klien API.
 - **Baca dulu** sebelum mengubah endpoint perangkat, field yang dibaca perangkat, atau status device di Dashboard:
     - `docs/api.md` bagian "Detail: endpoint perangkat" (body, nilai yang diterima, respons).
     - `docs/integrations.md` bagian "Kontrak dengan perangkat" (urutan siklus perangkat dan aturan bersama).
-- Perubahan pada hal di atas akan merusak firmware yang sudah ada: perbarui kedua dokumen itu pada commit yang sama dan tandai `BREAKING CHANGE:` di pesan commit.
+    - `docs/esp32-connection.md` (contoh kode penghubung yang dipakai tim firmware).
+- Perubahan pada hal di atas akan merusak firmware yang sudah ada: perbarui ketiga dokumen itu pada commit yang sama (termasuk contoh kode di `esp32-connection.md`) dan tandai `BREAKING CHANGE:` di pesan commit.
 
 ## Aturan yang harus dijaga
 
