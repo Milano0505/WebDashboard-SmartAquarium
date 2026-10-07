@@ -362,4 +362,4 @@ Saat menambah atau mengubah endpoint:
 
 1. Perbarui dokumen ini: tabel resource, ringkasan API, dan detail endpoint.
 2. Jika field database berubah, perbarui [database.md](database.md).
-3. Perubahan pada `/api/hardware/*` atau field yang dibaca perangkat akan merusak firmware yang sudah ada. Tandai `BREAKING CHANGE:` di pesan commit dan perbarui [integrations.md](integrations.md#kontrak-dengan-perangkat).
+3. Perubahan pada `/api/hardware/*` atau field yang dibaca perangkat akan merusak firmware yang sudah ada. Tandai `BREAKING CHANGE:` di pesan commit, lalu perbarui [integrations.md](integrations.md#kontrak-dengan-perangkat) dan contoh kode di [esp32-connection.md](esp32-connection.md).

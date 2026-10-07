@@ -2,15 +2,16 @@
 
 Dashboard web untuk memantau dan mengontrol akuarium dari jarak jauh: suhu air, heater, lampu, dan pemberi pakan. Sistem terdiri dari frontend React, REST API Express, dan database Firebase Cloud Firestore. Perangkat di akuarium (ESP32) mengirim data dan membaca pengaturan lewat API; firmware-nya tidak ada di repository ini.
 
-| Dokumen                                      | Isi                                                   |
-| -------------------------------------------- | ----------------------------------------------------- |
-| [docs/background.md](docs/background.md)     | Masalah yang diselesaikan dan dampak sistem           |
-| [docs/architecture.md](docs/architecture.md) | Bagian-bagian sistem dan hubungannya                  |
-| [docs/api.md](docs/api.md)                   | Semua endpoint REST API                               |
-| [docs/backend.md](docs/backend.md)           | Backend dan demo API                                  |
-| [docs/database.md](docs/database.md)         | Skema Firestore dan cara membuka database             |
-| [docs/frontend.md](docs/frontend.md)         | Halaman dashboard dan demo tampilan                   |
-| [docs/integrations.md](docs/integrations.md) | Alur frontend → backend → database dan demo integrasi |
+| Dokumen                                              | Isi                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| [docs/background.md](docs/background.md)             | Masalah yang diselesaikan dan dampak sistem            |
+| [docs/architecture.md](docs/architecture.md)         | Bagian-bagian sistem dan hubungannya                   |
+| [docs/api.md](docs/api.md)                           | Semua endpoint REST API                                |
+| [docs/backend.md](docs/backend.md)                   | Backend dan demo API                                   |
+| [docs/database.md](docs/database.md)                 | Skema Firestore dan cara membuka database              |
+| [docs/frontend.md](docs/frontend.md)                 | Halaman dashboard dan demo tampilan                    |
+| [docs/integrations.md](docs/integrations.md)         | Alur frontend → backend → database dan demo integrasi  |
+| [docs/esp32-connection.md](docs/esp32-connection.md) | Cara menghubungkan ESP32 dan contoh kode penghubungnya |
 
 ## Fitur
 

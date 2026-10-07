@@ -18,6 +18,7 @@ Konteks utama untuk Claude Code (dan anggota tim) di repository ini. Aturan yang
 - [docs/database.md](../docs/database.md): skema Firestore, siapa menulis apa, cara membuka database.
 - [docs/frontend.md](../docs/frontend.md): halaman, pembaruan otomatis, status perangkat, demo tampilan.
 - [docs/integrations.md](../docs/integrations.md): alur per fitur, kontrak dengan perangkat, demo integrasi.
+- [docs/esp32-connection.md](../docs/esp32-connection.md): cara menghubungkan ESP32 dan contoh kode penghubung (Wi-Fi, baca config, kirim telemetry).
 - [README.md](../README.md): fitur, cara menjalankan, variabel environment.
 
 ## Tentang proyek
@@ -33,7 +34,7 @@ Browser (React)  ──JWT──▶  REST API (Express)  ◀──x-device-key�
 
 - `frontend/`: React 19 + Vite 8 + Tailwind CSS 4 + React Router 7. JavaScript (JSX), tanpa TypeScript.
 - `backend/`: Node.js 22 + Express 5 (ES modules) + Firebase Admin SDK.
-- Repository ini hanya berisi **sistem web**. Firmware ESP32 dan perangkat keras tidak ada di sini; ESP32 hanya dilihat sebagai klien API.
+- Repository ini hanya berisi **sistem web**. Firmware ESP32 dan perangkat keras tidak ada di sini; ESP32 hanya dilihat sebagai klien API. Satu-satunya kode firmware adalah contoh kode penghubung di `docs/esp32-connection.md`.
 - Frontend dan ESP32 **tidak pernah** mengakses Firestore langsung; semuanya lewat REST API.
 
 ## Perintah
