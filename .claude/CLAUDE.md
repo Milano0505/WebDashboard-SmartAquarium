@@ -60,7 +60,7 @@ backend/
   config/                aquarium.js (AQUARIUM_ID, findAquarium), defaults.js, firebase.js, security.js
   middleware/auth.js     requireAuth (JWT) dan requireDeviceKey (ESP32)
   routes/                auth.js, users.js, aquariums.js, hardware.js
-  utils/                 config-validation.js, errors.js, firestore.js, notifications.js, profile-photo.js
+  utils/                 config-validation.js, device-status.js, errors.js, firestore.js, notifications.js, profile-photo.js
 frontend/src/
   App.jsx                Routing, ProtectedRoute, toast sukses
   api/service.js         Semua request HTTP
@@ -76,7 +76,7 @@ docs/                    Dokumentasi detail (lihat daftar di atas)
 
 1. **Satu akuarium bersama.** Semua akun memakai `aquariums/{SHARED_AQUARIUM_ID}` (default `aquarium-001`). ID lain dibalas 404. `VITE_AQUARIUM_ID` di frontend harus sama.
 2. **Suhu selalu disimpan dalam Celsius.** Fahrenheit hanya untuk tampilan; pilihan satuan disimpan di `tempConfig.unit`.
-3. **`realtimeState` hanya diisi oleh data dari ESP32.** Tombol di dashboard hanya menyimpan _perintah_ di pengaturan.
+3. **`realtimeState` hanya diisi oleh data dari ESP32.** (Penanda `deviceMonitor` terpisah dan boleh diisi server.) Tombol di dashboard hanya menyimpan _perintah_ di pengaturan.
 4. **Nilai turunan dihitung server**: `schedule.durationHours`, `avgHoursOn/avgHoursOff`, `feederConfig.lastTriggeredAt`.
 5. **Tidak ada notifikasi email/SMS.** Peringatan hanya lewat halaman Alerts dan browser notification.
 6. **Email pengguna tidak bisa diubah.**

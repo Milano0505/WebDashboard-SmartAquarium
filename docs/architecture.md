@@ -52,9 +52,9 @@ Polling dipilih karena sederhana dan cukup untuk data akuarium yang berubah lamb
 Diagram ini menunjukkan modul yang dilihat pengguna, disusun bertingkat dari atas ke bawah.
 
 - **Tingkat 1: Authentication.** Semua modul lain hanya bisa dibuka setelah login.
-- **Tingkat 2:** tiga modul di bawah Authentication: **Notifikasi**, **Dashboard**, dan **Riwayat Data**.
+- **Tingkat 2:** empat modul di bawah Authentication: **Notifikasi**, **Dashboard**, **Riwayat Data**, dan **Konfigurasi**.
 - **Tingkat 3:** empat modul di bawah Dashboard: **Lighting Control**, **Monitoring**, **Temperature Control**, dan **Automatic Feeder**.
-- **Tingkat 4:** Lighting Control, Temperature Control, dan Automatic Feeder masing-masing punya dua cabang, yaitu **Manual** dan **Automatic**. Monitoring punya satu cabang: memantau suhu air dan status sistem secara langsung.
+- **Tingkat 4:** Lighting Control, Temperature Control, dan Automatic Feeder masing-masing punya dua cabang, yaitu **Manual** dan **Automatic**. Monitoring punya satu cabang: memantau suhu air dan status sistem secara berkala (_near real-time_, mengikuti `pollFrequency`).
 
 Hubungan modul dengan halaman di aplikasi:
 
@@ -67,9 +67,12 @@ Hubungan modul dengan halaman di aplikasi:
 | Automatic Feeder    | Tombol **Feed Now**  | Pakan mengikuti jadwal harian     | `/dashboard/feeder`                               |
 | Riwayat Data        | –                    | –                                 | `/history` (tab Table dan Calendar)               |
 | Notifikasi          | –                    | –                                 | `/notifications` (menu **Alerts**)                |
-| Konfigurasi\*       | –                    | –                                 | `/configuration` (Profile, System, Alerts, About) |
+| Konfigurasi         | –                    | –                                 | `/configuration` (Profile, System, Alerts, About) |
 
-\* Konfigurasi tidak ada di diagram awal, tetapi ditambahkan untuk profil pengguna, satuan suhu, zona waktu, interval pembaruan, batas suhu aman, dan browser notification.
+- **Monitoring** memakai polling, bukan WebSocket, sehingga data di layar bisa tertinggal beberapa detik dari kondisi akuarium (lihat [Hubungan antar-blok](#hubungan-antar-blok)).
+- **Feed Now** hanya menyimpan perintah. Perangkat menjalankannya pada siklus polling berikutnya, dan dashboard menampilkan "Waiting for the device…" sampai perangkat mengirim data.
+- **Notifikasi** berisi peringatan suhu, perangkat offline dan online kembali, serta perubahan pengaturan (daftar lengkap di [backend.md](backend.md#notifikasi)).
+- **Konfigurasi** mencakup profil pengguna, satuan suhu, zona waktu, interval pembaruan, batas suhu aman, dan browser notification.
 
 ## Prinsip desain
 

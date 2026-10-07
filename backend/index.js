@@ -5,6 +5,7 @@ import aquariumRoutes from "./routes/aquariums.js";
 import authRoutes from "./routes/auth.js";
 import hardwareRoutes from "./routes/hardware.js";
 import userRoutes from "./routes/users.js";
+import { startDeviceWatchdog } from "./utils/device-status.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -56,4 +57,5 @@ app.use((error, req, res, next) => {
 
 app.listen(port, () => {
     console.log(`Smart Aquarium API listening on port ${port}`);
+    startDeviceWatchdog();
 });

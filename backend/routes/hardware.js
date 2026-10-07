@@ -2,6 +2,7 @@ import { Router } from "express";
 import { AQUARIUM_ID, findAquarium } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireDeviceKey } from "../middleware/auth.js";
+import { offlineThresholdSeconds } from "../utils/device-status.js";
 import { serializeFirestore } from "../utils/firestore.js";
 import { notificationsRef, sharedNotification } from "../utils/notifications.js";
 
@@ -36,8 +37,7 @@ const isOutOfRange = (temp, min, max) => (Number.isFinite(min) && temp < min) ||
 function lightingUsageUpdate(aquarium, now) {
     const previousLed = aquarium.realtimeState?.ledStatus;
     const lastUpdated = aquarium.realtimeState?.lastUpdated?.toDate?.();
-    const pollFrequency = aquarium.systemConfig?.pollFrequency;
-    const maxGapSeconds = Math.max(120, (Number.isFinite(pollFrequency) ? pollFrequency : 5) * 3);
+    const maxGapSeconds = offlineThresholdSeconds(aquarium.systemConfig?.pollFrequency);
     const elapsedSeconds = lastUpdated ? (now.getTime() - lastUpdated.getTime()) / 1000 : 0;
     if (!["ON", "OFF"].includes(previousLed) || elapsedSeconds <= 0 || elapsedSeconds > maxGapSeconds) return null;
 
@@ -79,6 +79,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
     const now = new Date();
+    const cameBackOnline = aquarium.data.deviceMonitor?.offlineNotified === true;
     const batch = db.batch();
     batch.update(aquarium.reference, {
         "realtimeState.currentTemp": currentTemp,
@@ -86,6 +87,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         "realtimeState.ledStatus": ledStatus,
         "realtimeState.feederStatus": feederStatus,
         "realtimeState.lastUpdated": FieldValue.serverTimestamp(),
+        ...(cameBackOnline && { "deviceMonitor.offlineNotified": false }),
         ...lightingUsageUpdate(aquarium.data, now),
     });
     batch.set(aquarium.reference.collection("telemetry_history").doc(), {
@@ -112,6 +114,18 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
                 title: "Temperature Alert",
                 message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
                 type: "alert",
+            }),
+        );
+    }
+
+    if (cameBackOnline) {
+        batch.set(
+            notificationsRef().doc(),
+            sharedNotification({
+                actorName: "Aquarium hardware",
+                title: "Device Back Online",
+                message: "The aquarium hardware is sending data again.",
+                type: "success",
             }),
         );
     }
