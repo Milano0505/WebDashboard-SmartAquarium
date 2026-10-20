@@ -1,106 +1,116 @@
-# Arsitektur Sistem
+# Arsitektur
 
-Dokumen ini menjelaskan bagian-bagian sistem web Smart Aquarium Control dan bagaimana bagian-bagian itu saling terhubung. Alasan sistem ini dibuat ada di [background.md](background.md).
+Dokumen ini menjelaskan bagian-bagian sistem, aturan desainnya, dan bagaimana data mengalir. Alasan sistem dibuat ada di [background.md](background.md).
 
-## Gambaran singkat
+## Blok Sistem
 
-Sistem web terdiri dari tiga bagian utama dan satu klien dari luar:
+```text
+┌─────────────┐   HTTP + JWT    ┌─────────────┐   Admin SDK   ┌───────────┐
+│  Frontend   │ ──────────────▶ │   Backend   │ ────────────▶ │ Firestore │
+│ React (SPA) │                 │ Express API │               └───────────┘
+└─────────────┘                 │             │
+                                │             │ ◀── HTTP + x-device-key ── ┌───────┐
+                                └─────────────┘                            │ ESP32 │
+                                                                           └───────┘
+```
 
-1. **Frontend**: aplikasi web yang dibuka pengguna di browser.
-2. **Backend**: REST API yang memproses semua permintaan.
-3. **Database**: Firebase Cloud Firestore, tempat semua data disimpan.
-4. **Perangkat akuarium (ESP32)**: klien dari luar yang membaca pengaturan dan mengirim data ke backend. Firmware-nya tidak ada di repository ini.
+| Blok      | Folder      | Tugas                                                                             |
+| --------- | ----------- | --------------------------------------------------------------------------------- |
+| Frontend  | `frontend/` | Menampilkan halaman, mengirim request ke backend, memuat ulang data berkala       |
+| Backend   | `backend/`  | Memeriksa login dan input, menjalankan aturan sistem, membaca/menulis database    |
+| Database  | –           | Firebase Cloud Firestore: akun, pengaturan, status perangkat, riwayat, notifikasi |
+| Perangkat | `device/`   | ESP32: membaca pengaturan, mengontrol heater dan lampu, mengirim suhu dan status  |
 
-Aturan terpenting: **frontend dan perangkat tidak pernah mengakses database secara langsung.** Semua data selalu lewat backend, sehingga validasi dan hak akses hanya perlu diatur di satu tempat.
+Cara terhubung:
 
-## Diagram blok sistem
+| Koneksi             | Protokol           | Identitas                                  |
+| ------------------- | ------------------ | ------------------------------------------ |
+| Frontend → Backend  | HTTP + JSON        | JWT di header `Authorization: Bearer …`    |
+| Perangkat → Backend | HTTP + JSON        | Header `x-device-key` = `HARDWARE_API_KEY` |
+| Backend → Database  | Firebase Admin SDK | Service account                            |
 
-Diagram blok sistem web berisi lima blok. Pengguna di kiri, perangkat di kanan, backend di tengah, dan database di bawah backend.
+## Aturan Desain
 
-### Blok
+1. **Semua lewat backend.** Frontend dan perangkat tidak pernah mengakses Firestore langsung, sehingga validasi dan hak akses diatur di satu tempat.
+2. **Satu akuarium bersama.** Semua akun memakai `aquariums/{SHARED_AQUARIUM_ID}` (default `aquarium-001`). ID lain dibalas `404`.
+3. **Perintah dan status dipisah.** Tombol di dashboard hanya menyimpan _perintah_ di pengaturan (`tempConfig`, `lightingConfig`, `feederConfig`). `realtimeState` adalah _status nyata_ dan hanya ditulis oleh telemetry perangkat.
+4. **Suhu disimpan dalam Celsius.** Fahrenheit hanya untuk tampilan (`tempConfig.unit`).
+5. **Nilai turunan dihitung server:** `schedule.durationHours`, `avgHoursOn/Off`, dan `feederConfig.lastTriggeredAt`.
+6. **Tanpa email/SMS.** Peringatan hanya lewat halaman Alerts dan browser notification.
 
-| Blok               | Isi                                                                   | Tugas                                                                               |
-| ------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Pengguna           | Pemilik akuarium dengan browser di laptop atau smartphone             | Memantau kondisi dan mengubah pengaturan akuarium                                   |
-| Frontend           | Aplikasi React (single-page app) yang dibangun dengan Vite            | Menampilkan halaman, mengirim permintaan ke backend, menampilkan hasilnya           |
-| Backend            | Server Node.js + Express yang menyediakan REST API                    | Memeriksa login dan input, menjalankan aturan sistem, membaca/menulis database      |
-| Database           | Firebase Cloud Firestore (di Google Cloud)                            | Menyimpan akun, pengaturan, status perangkat, riwayat data, dan notifikasi          |
-| Perangkat akuarium | ESP32 yang mengontrol heater, lampu, dan pemberi pakan (di luar repo) | Mengambil pengaturan terbaru, menjalankannya, lalu melaporkan suhu dan status nyata |
+## Alur Data
 
-### Hubungan antar-blok
+### Pengguna mengubah pengaturan
 
-Setiap panah di diagram adalah koneksi HTTP berformat JSON, kecuali koneksi ke database.
+Contoh: mengubah suhu target menjadi 26.
 
-| Dari → Ke           | Cara terhubung                    | Bukti identitas                          | Data yang dikirim                                              |
-| ------------------- | --------------------------------- | ---------------------------------------- | -------------------------------------------------------------- |
-| Pengguna → Frontend | Browser membuka URL dashboard     | –                                        | Klik dan isian form                                            |
-| Frontend → Backend  | HTTP + JSON (`/api/...`)          | Token JWT di header `Authorization`      | Login, perubahan pengaturan, Feed Now, permintaan data         |
-| Backend → Frontend  | Respons HTTP + JSON               | –                                        | Data akuarium, riwayat, notifikasi, pesan error                |
-| Perangkat → Backend | HTTP + JSON (`/api/hardware/...`) | Kunci perangkat di header `x-device-key` | Suhu dan status nyata heater, lampu, pemberi pakan             |
-| Backend → Perangkat | Respons HTTP + JSON               | –                                        | Pengaturan terbaru (mode, suhu target, jadwal, perintah pakan) |
-| Backend ↔ Database  | Firebase Admin SDK                | Service account Google                   | Baca dan tulis dokumen Firestore                               |
+1. Pengguna menggeser slider di tab Temperature lalu menekan **Save**.
+2. Frontend memanggil `updateTemperatureConfig()`, yang mengirim `PATCH /api/aquariums/aquarium-001/temperature-config` dengan JWT.
+3. Backend memeriksa token dan nilainya (10–35), lalu dalam satu batch menyimpan `tempConfig.targetTemp` dan membuat notifikasi "Temperature settings updated".
+4. Frontend menampilkan toast, memuat ulang dashboard, dan memperbarui badge Alerts.
+5. Pada siklus berikutnya, perangkat membaca suhu target baru dan menyesuaikan heater.
 
-Semua koneksi dimulai dari klien (frontend atau perangkat). Backend tidak pernah "mendorong" data. Karena itu:
+### Perangkat mengirim data
 
-- **Frontend** memuat ulang data secara berkala (polling), misalnya dashboard setiap `pollFrequency` detik (minimal 5 detik).
-- **Perangkat** menanyakan pengaturan terbaru setiap `pollFrequency` detik, lalu mengirim data hasil pembacaannya.
+1. Perangkat memanggil `POST /api/hardware/aquarium-001/telemetry` dengan suhu dan status nyata.
+2. Backend menulis `realtimeState`, menambah dokumen `telemetry_history`, memperbarui statistik lampu, dan membuat notifikasi jika perlu (suhu di luar batas, sensor rusak, perangkat kembali online).
+3. Dashboard menampilkan data baru pada pembaruan berikutnya.
 
-Polling dipilih karena sederhana dan cukup untuk data akuarium yang berubah lambat, tanpa perlu WebSocket atau MQTT.
+### Feed Now
 
-## Diagram arsitektur perangkat lunak
+1. Pengguna menekan **Feed Now** (hanya mode `MANUAL`; selain itu `409`).
+2. Backend mengisi `feederConfig.lastTriggeredAt` dan membuat notifikasi. `realtimeState` tidak diubah.
+3. Dashboard menampilkan "Waiting for the device…" sampai ada telemetry yang lebih baru dari `lastTriggeredAt`.
 
-Diagram ini menunjukkan modul yang dilihat pengguna, disusun bertingkat dari atas ke bawah.
+> **Catatan:** firmware saat ini belum mengontrol pemberi pakan (`feederStatus` selalu `Idle`). Status "Waiting" tetap hilang pada telemetry berikutnya, tetapi pakan tidak benar-benar diberikan. Ini batasan yang sudah diketahui, bukan bug dashboard.
 
-- **Tingkat 1: Authentication.** Semua modul lain hanya bisa dibuka setelah login.
-- **Tingkat 2:** empat modul di bawah Authentication: **Notifikasi**, **Dashboard**, **Riwayat Data**, dan **Konfigurasi**.
-- **Tingkat 3:** empat modul di bawah Dashboard: **Lighting Control**, **Monitoring**, **Temperature Control**, dan **Automatic Feeder**.
-- **Tingkat 4:** Lighting Control, Temperature Control, dan Automatic Feeder masing-masing punya dua cabang, yaitu **Manual** dan **Automatic**. Monitoring punya satu cabang: memantau suhu air dan status sistem secara berkala (_near real-time_, mengikuti `pollFrequency`).
+## Kontrak dengan Perangkat
 
-Hubungan modul dengan halaman di aplikasi:
+Setiap `systemConfig.pollFrequency` detik, perangkat menjalankan siklus ini **dengan urutan ini**:
 
-| Modul               | Mode manual          | Mode otomatis                     | Halaman / route                                   |
-| ------------------- | -------------------- | --------------------------------- | ------------------------------------------------- |
-| Authentication      | –                    | –                                 | `/login`, `/register`                             |
-| Monitoring          | –                    | –                                 | `/dashboard` (tab Overview)                       |
-| Temperature Control | Tombol heater On/Off | Heater mengikuti suhu target      | `/dashboard/temperature`                          |
-| Lighting Control    | Tombol lampu On/Off  | Lampu mengikuti jadwal nyala-mati | `/dashboard/lighting`                             |
-| Automatic Feeder    | Tombol **Feed Now**  | Pakan mengikuti jadwal harian     | `/dashboard/feeder`                               |
-| Riwayat Data        | –                    | –                                 | `/history` (tab Table dan Calendar)               |
-| Notifikasi          | –                    | –                                 | `/notifications` (menu **Alerts**)                |
-| Konfigurasi         | –                    | –                                 | `/configuration` (Profile, System, Alerts, About) |
+1. **Baca pengaturan:** `GET /api/hardware/{aquariumId}/config`.
+2. **Jalankan pengaturan:** heater, lampu, dan pemberi pakan.
+3. **Kirim data:** `POST /api/hardware/{aquariumId}/telemetry`.
 
-- **Monitoring** memakai polling, bukan WebSocket, sehingga data di layar bisa tertinggal beberapa detik dari kondisi akuarium (lihat [Hubungan antar-blok](#hubungan-antar-blok)).
-- **Feed Now** hanya menyimpan perintah. Perangkat menjalankannya pada siklus polling berikutnya, dan dashboard menampilkan "Waiting for the device…" sampai perangkat mengirim data.
-- **Notifikasi** berisi peringatan suhu, perangkat offline dan online kembali, serta perubahan pengaturan (daftar lengkap di [backend.md](backend.md#notifikasi)).
-- **Konfigurasi** mencakup profil pengguna, satuan suhu, zona waktu, interval pembaruan, batas suhu aman, dan browser notification.
+Urutan ini penting: dashboard menganggap Feed Now selesai saat menerima telemetry pertama setelah perintah dikirim. Jika telemetry dikirim sebelum perintah dijalankan, status "Waiting" hilang terlalu cepat.
 
-## Prinsip desain
+Perilaku yang diharapkan dari perangkat:
 
-| Prinsip                             | Artinya                                                                                                                                  |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Satu akuarium bersama               | Semua akun memakai satu dokumen akuarium (`aquarium-001`). ID lain ditolak.                                                              |
-| Perintah terpisah dari status nyata | Tombol di dashboard hanya menyimpan **perintah** di pengaturan. **Status nyata** (`realtimeState`) hanya diisi oleh data dari perangkat. |
-| Nilai turunan dihitung server       | Durasi jadwal lampu, rata-rata jam lampu, dan waktu perintah pakan dihitung backend, bukan dikirim klien.                                |
-| Suhu selalu Celsius                 | Database selalu menyimpan Celsius. Fahrenheit hanya untuk tampilan.                                                                      |
-| Validasi di backend                 | Frontend boleh memeriksa input, tetapi backend selalu memeriksa ulang sebelum menyimpan.                                                 |
-| Notifikasi hanya di web             | Tidak ada email atau SMS. Peringatan muncul di halaman Alerts dan browser notification.                                                  |
+| Bagian | Aturan                                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heater | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di bawah `targetTemp − 0,5` dan mati di atas `targetTemp + 0,5`.                                 |
+| Lampu  | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di antara `startTime` dan `endTime` (zona waktu akuarium) jika `isActive`.                       |
+| Pakan  | `AUTOMATIC` memberi pakan pada jam di `schedules` yang aktif. `MANUAL` memberi pakan sekali setiap `lastTriggeredAt` berubah. Belum ada di firmware saat ini. |
+| Sensor | Jika sensor gagal, kirim telemetry **tanpa `currentTemp`** dengan `event` berisi alasannya. Backend membuat notifikasi **Sensor Error** sekali.               |
+
+Aturan yang dipakai bersama backend dan frontend:
+
+| Aturan            | Definisi                                                                   | Dipakai di                                                                         |
+| ----------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Perangkat offline | Tidak ada telemetry lebih dari maks(120 detik, 3 × `pollFrequency`)        | `utils/device-status.js`, `routes/hardware.js`, `Dashboard.jsx` (`isDeviceOnline`) |
+| Feed Now menunggu | `feederConfig.lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` | `Dashboard.jsx` (`isFeedPending`)                                                  |
+| Format jam jadwal | `hh:mm AM/PM`, contoh `08:00 AM`                                           | Backend, frontend, dan firmware                                                    |
+
+Detail request dan response ada di [api.md](api.md#endpoint-perangkat); cara memasang firmware ada di [device/README.md](../device/README.md).
+
+## Pengaturan yang Harus Cocok
+
+| Sisi A                                  | Sisi B                         | Jika tidak cocok                          |
+| --------------------------------------- | ------------------------------ | ----------------------------------------- |
+| `VITE_API_URL` (frontend)               | Alamat dan `PORT` backend      | "Unable to connect to the API."           |
+| `VITE_AQUARIUM_ID` (frontend)           | `SHARED_AQUARIUM_ID` (backend) | Semua request akuarium dibalas `404`      |
+| `AQUARIUM_ID` (firmware)                | `SHARED_AQUARIUM_ID` (backend) | Request perangkat dibalas `404`           |
+| `DEVICE_KEY` (firmware)                 | `HARDWARE_API_KEY` (backend)   | `401` (atau `503` jika kosong di backend) |
+| `FRONTEND_ORIGIN` (backend, production) | Alamat frontend dibuka         | Browser memblokir request (CORS)          |
 
 ## Teknologi
 
-| Bagian      | Teknologi                                                              | Detail                       |
-| ----------- | ---------------------------------------------------------------------- | ---------------------------- |
-| Frontend    | React 19, React Router 7, Vite 8, Tailwind CSS 4 (JavaScript/JSX)      | [frontend.md](frontend.md)   |
-| Backend     | Node.js 22, Express 5, Firebase Admin SDK                              | [backend.md](backend.md)     |
-| Database    | Firebase Cloud Firestore (NoSQL berbasis dokumen)                      | [database.md](database.md)   |
-| Autentikasi | JWT untuk pengguna, kunci perangkat untuk ESP32, bcrypt untuk password | [api.md](api.md#autentikasi) |
-| Komunikasi  | REST API dengan JSON lewat HTTP                                        | [api.md](api.md)             |
-| Alat bantu  | npm (backend), pnpm (frontend), Prettier, nodemon                      | [README.md](../README.md)    |
+| Bagian    | Teknologi                                                                           |
+| --------- | ----------------------------------------------------------------------------------- |
+| Frontend  | React 19, React Router 7, Vite 8, Tailwind CSS 4 (JavaScript/JSX, tanpa TypeScript) |
+| Backend   | Node.js 22, Express 5 (ES modules), Firebase Admin SDK, JWT, bcrypt                 |
+| Database  | Firebase Cloud Firestore                                                            |
+| Perangkat | ESP32 (Arduino), PlatformIO, sensor DS18B20, RTC DS3231, relay                      |
+| Alat      | npm (backend), pnpm 10 (frontend), Prettier                                         |
 
-## Lingkungan menjalankan
-
-| Lingkungan  | Frontend                             | Backend                                  | Catatan                                                                     |
-| ----------- | ------------------------------------ | ---------------------------------------- | --------------------------------------------------------------------------- |
-| Development | `pnpm dev` → `http://localhost:5173` | `npm run dev` → `http://localhost:5000`  | Semua origin diizinkan (CORS). JWT secret dibuat otomatis jika kosong.      |
-| Production  | Hasil `pnpm build` (`frontend/dist`) | `npm start` dengan `NODE_ENV=production` | Hanya origin di `FRONTEND_ORIGIN` yang diizinkan; `JWT_SECRET` wajib diisi. |
-
-Kedua lingkungan memakai project Firestore yang sama jika service account-nya sama. Cara menghubungkan semua bagian dijelaskan di [integrations.md](integrations.md).
+Grafik suhu dan ikon dibuat sendiri dengan SVG, tanpa library tambahan.

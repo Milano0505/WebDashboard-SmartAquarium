@@ -2,7 +2,7 @@
   Firmware ESP32 Smart Aquarium: heater dan lampu, terhubung ke REST API backend.
   Pemberi pakan belum ada di perangkat keras, jadi feederStatus selalu "Idle".
 
-  Siklus setiap systemConfig.pollFrequency detik (urutan ini wajib, lihat docs/integrations.md):
+  Siklus setiap systemConfig.pollFrequency detik (urutan ini wajib, lihat docs/architecture.md):
     1. GET  /api/hardware/{aquariumId}/config     (task jaringan, core 0)
     2. Menjalankan config: heater dan lampu       (loop(), core 1)
     3. POST /api/hardware/{aquariumId}/telemetry  (task jaringan, core 0)
@@ -33,7 +33,7 @@
 
 constexpr uint8_t PIN_ONE_WIRE = 4;      // DS18B20 DAT
 constexpr uint8_t PIN_RELAY_HEATER = 18; // Relay IN1
-constexpr uint8_t PIN_RELAY_LAMP = 19;   // Relay IN2
+constexpr uint8_t PIN_RELAY_LAMP = 23;   // Relay IN2
 constexpr uint8_t PIN_BUZZER = 5;        // Buzzer aktif
 constexpr uint8_t PIN_SDA = 21;          // RTC DS3231
 constexpr uint8_t PIN_SCL = 22;
@@ -601,14 +601,17 @@ bool fetchConfig() {
 bool sendTelemetry() {
     DeviceStatus device = getStatus();
 
-    // Server menolak suhu di luar -10..60 C, misalnya saat sensor terputus
-    if (isnan(device.temperature) || device.temperature < -10 || device.temperature > 60) {
+    // Sensor gagal dengan alasan (event): kirim laporan tanpa currentTemp agar dashboard menampilkan "Sensor Error"
+    bool sensorFault = isnan(device.temperature) && device.event[0] != '\0';
+
+    // Server menolak suhu di luar -10..60 C, dan tanpa event tidak ada yang bisa dilaporkan
+    if (!sensorFault && (isnan(device.temperature) || device.temperature < -10 || device.temperature > 60)) {
         Serial.println("[API] Telemetry skipped: no valid temperature reading.");
         return false;
     }
 
     JsonDocument doc;
-    doc["currentTemp"] = device.temperature;
+    if (!sensorFault) doc["currentTemp"] = device.temperature;
     doc["heaterStatus"] = device.heaterOn ? "ON" : "OFF";
     doc["ledStatus"] = device.lampOn ? "ON" : "OFF";
     doc["feederStatus"] = "Idle"; // Pemberi pakan belum dipasang di perangkat keras
@@ -630,6 +633,10 @@ bool sendTelemetry() {
     if (code != 201) {
         logRequestError("Send telemetry", code, response);
         return false;
+    }
+    if (sensorFault) {
+        Serial.printf("[API] Sensor fault reported: %s\n", device.event);
+        return true;
     }
     Serial.printf("[API] Telemetry sent: %.1f C, heater %s, lamp %s\n", device.temperature,
                   device.heaterOn ? "ON" : "OFF", device.lampOn ? "ON" : "OFF");
