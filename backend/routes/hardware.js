@@ -64,8 +64,14 @@ function lightingUsageUpdate(aquarium, now) {
 
 router.post("/:aquariumId/telemetry", async (req, res) => {
     const { currentTemp, heaterStatus, ledStatus, feederStatus } = req.body;
-    if (!Number.isFinite(currentTemp) || currentTemp < -10 || currentTemp > 60) {
-        return res.status(400).json({ message: "currentTemp must be a finite Celsius value between -10 and 60." });
+    const event = typeof req.body.event === "string" ? req.body.event.trim().slice(0, 160) : "";
+    // Laporan sensor gagal: tanpa currentTemp tetapi dengan event (alasannya)
+    const sensorFault = (currentTemp === undefined || currentTemp === null) && event !== "";
+    if (!sensorFault && (!Number.isFinite(currentTemp) || currentTemp < -10 || currentTemp > 60)) {
+        return res.status(400).json({
+            message:
+                "currentTemp must be a finite Celsius value between -10 and 60 (omit it only to report a sensor fault with an event).",
+        });
     }
     if (
         !["ON", "OFF"].includes(heaterStatus) ||
@@ -80,42 +86,62 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
 
     const now = new Date();
     const cameBackOnline = aquarium.data.deviceMonitor?.offlineNotified === true;
+    const sensorErrorNotified = aquarium.data.deviceMonitor?.sensorErrorNotified === true;
     const batch = db.batch();
     batch.update(aquarium.reference, {
-        "realtimeState.currentTemp": currentTemp,
+        // Sensor gagal: suhu dikosongkan agar dashboard tidak menampilkan suhu lama
+        "realtimeState.currentTemp": sensorFault ? null : currentTemp,
         "realtimeState.heaterStatus": heaterStatus,
         "realtimeState.ledStatus": ledStatus,
         "realtimeState.feederStatus": feederStatus,
         "realtimeState.lastUpdated": FieldValue.serverTimestamp(),
         ...(cameBackOnline && { "deviceMonitor.offlineNotified": false }),
+        ...(sensorFault && !sensorErrorNotified && { "deviceMonitor.sensorErrorNotified": true }),
+        ...(!sensorFault && sensorErrorNotified && { "deviceMonitor.sensorErrorNotified": false }),
         ...lightingUsageUpdate(aquarium.data, now),
     });
-    batch.set(aquarium.reference.collection("telemetry_history").doc(), {
-        userId: null,
-        aquariumId: AQUARIUM_ID,
-        timestamp: FieldValue.serverTimestamp(),
-        temp: currentTemp,
-        heaterState: heaterStatus,
-        ledState: ledStatus,
-        feederState: feederStatus,
-        event: typeof req.body.event === "string" ? req.body.event.slice(0, 160) : "Telemetry update",
-    });
 
-    // Alert hanya saat suhu baru keluar dari batas, bukan di setiap pembacaan
-    const { minTempThreshold: min, maxTempThreshold: max } = aquarium.data.tempConfig || {};
-    const previousTemp = aquarium.data.realtimeState?.currentTemp;
-    const wasOutOfRange = Number.isFinite(previousTemp) && isOutOfRange(previousTemp, min, max);
-    if (isOutOfRange(currentTemp, min, max) && !wasOutOfRange) {
-        const isLow = currentTemp < min;
-        batch.set(
-            notificationsRef().doc(),
-            sharedNotification({
-                actorName: "Aquarium hardware",
-                title: "Temperature Alert",
-                message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
-                type: "alert",
-            }),
-        );
+    if (sensorFault) {
+        // Notifikasi hanya sekali sampai pembacaan sensor normal kembali
+        if (!sensorErrorNotified) {
+            batch.set(
+                notificationsRef().doc(),
+                sharedNotification({
+                    actorName: "Aquarium hardware",
+                    title: "Sensor Error",
+                    message: `The temperature sensor is not returning a valid reading (${event}). Check the sensor wiring.`,
+                    type: "alert",
+                }),
+            );
+        }
+    } else {
+        batch.set(aquarium.reference.collection("telemetry_history").doc(), {
+            userId: null,
+            aquariumId: AQUARIUM_ID,
+            timestamp: FieldValue.serverTimestamp(),
+            temp: currentTemp,
+            heaterState: heaterStatus,
+            ledState: ledStatus,
+            feederState: feederStatus,
+            event: event || "Telemetry update",
+        });
+
+        // Alert hanya saat suhu baru keluar dari batas, bukan di setiap pembacaan
+        const { minTempThreshold: min, maxTempThreshold: max } = aquarium.data.tempConfig || {};
+        const previousTemp = aquarium.data.realtimeState?.currentTemp;
+        const wasOutOfRange = Number.isFinite(previousTemp) && isOutOfRange(previousTemp, min, max);
+        if (isOutOfRange(currentTemp, min, max) && !wasOutOfRange) {
+            const isLow = currentTemp < min;
+            batch.set(
+                notificationsRef().doc(),
+                sharedNotification({
+                    actorName: "Aquarium hardware",
+                    title: "Temperature Alert",
+                    message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
+                    type: "alert",
+                }),
+            );
+        }
     }
 
     if (cameBackOnline) {
