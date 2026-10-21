@@ -99,5 +99,3 @@ Jangan commit `.env`, `serviceAccountKey.json`, atau `.dev-jwt-secret` (sudah ad
 | [docs/hardware/software.md](docs/hardware/software.md)     | Modul firmware, library, diagram, driver per modul                     |
 | [docs/hardware/testing.md](docs/hardware/testing.md)       | Pengujian dan debugging tiap modul perangkat                           |
 | [device/README.md](device/README.md)                       | Firmware ESP32: pemasangan, koneksi ke backend, perilaku, masalah umum |
-
-Berkas Word untuk presentasi: [docs/web/presentasi-uts.docx](docs/web/presentasi-uts.docx) (dashboard web) dan [docs/hardware/presentasi-uts-embedded.docx](docs/hardware/presentasi-uts-embedded.docx) (perangkat embedded).
