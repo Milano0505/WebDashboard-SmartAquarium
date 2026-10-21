@@ -44,7 +44,7 @@ export function createDefaultAquarium(userId) {
         },
         systemConfig: {
             pollFrequency: 5,
-            timezone: "Asia/Manila",
+            timezone: "Asia/Jakarta",
         },
         lightingUsage: {},
     };

@@ -6,23 +6,23 @@ Firmware ada di [main.cpp](../../device/src/main.cpp). Cara memasang dan menjala
 
 Satu file dibagi menjadi bagian-bagian berikut (urut dari atas):
 
-| Modul              | Fungsi                                                                                                                                                               | Alasan dipisah                                                                                                      |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Pin dan konstanta  | Menyimpan nomor pin, polaritas relay, batas suhu, dan interval waktu.                                                                                                | Semua nilai yang mungkin diubah ada di satu tempat; mengganti pin atau ambang tidak perlu mencari di banyak fungsi. |
-| Data bersama       | Menyimpan RemoteConfig (pengaturan dari dashboard) dan DeviceStatus (suhu dan status nyata). Akses lewat getConfig(), getStatus(), set…() dengan portENTER_CRITICAL. | Core 0 dan core 1 saling berbagi data. Hanya tipe sederhana, sehingga aman disalin di dalam critical section.       |
-| Relay              | initRelay() memastikan relay OFF sebelum pin menjadi output; switchRelay() menyalakan atau mematikan.                                                                | Dipakai heater dan lampu; polaritas aktif-LOW hanya diatur di satu tempat.                                          |
-| Alarm              | setAlarm() menyimpan alasan alarm; updateAlarm() membunyikan buzzer 150 ms tiap 1 detik tanpa menahan program.                                                       | Memisahkan keputusan alarm dari cara membunyikannya.                                                                |
-| Jam lokal          | Menyetel zona waktu dari dashboard, mengambil waktu dari NTP, dan mencatat saat NTP sinkron.                                                                         | Sumber waktu dan zona waktu dibutuhkan lampu saja; dipisah agar sumber waktu mudah diganti (misalnya RTC).          |
-| Heater             | Membaca DS18B20 secara berkala (non-blocking) dan memutuskan heater: hysteresis, mode manual, pengaman 36 °C.                                                        | Semua yang berhubungan dengan suhu ada di satu modul.                                                               |
-| Lampu              | Memeriksa jadwal tiap 1 detik dan menyalakan relay lampu (mode otomatis/manual).                                                                                     | Jadwal bisa melewati tengah malam; logikanya (inSchedule) terpisah sehingga mudah diuji.                            |
-| Jaringan           | connectWiFi(), fetchConfig() (GET), sendTelemetry() (POST), networkTask() sebagai siklusnya.                                                                         | Berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer di core 1.                   |
-| Penyimpanan config | saveConfig() dan loadSavedConfig() memakai Preferences (flash).                                                                                                      | Config terakhir tetap ada setelah mati listrik; flash ditulis hanya saat ada perubahan.                             |
-| setup() dan loop() | setup() menginisialisasi semua modul dan menjalankan task jaringan; loop() menjalankan config baru dan memanggil update…() berulang.                                 | Titik awal program; berisi pemanggilan saja, tanpa logika.                                                          |
+| Modul              | Fungsi                                                                                                                                                                                                             | Alasan dipisah                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Pin dan konstanta  | Menyimpan nomor pin, polaritas relay, batas suhu, dan interval waktu.                                                                                                                                              | Semua nilai yang mungkin diubah ada di satu tempat; mengganti pin atau ambang tidak perlu mencari di banyak fungsi. |
+| Data bersama       | Menyimpan RemoteConfig (pengaturan dari dashboard) dan DeviceStatus (suhu dan status nyata). Akses lewat getConfig(), getStatus(), dan locked() yang memakai portENTER_CRITICAL.                                   | Core 0 dan core 1 saling berbagi data. Hanya tipe sederhana, sehingga aman disalin di dalam critical section.       |
+| Relay              | initRelay() memastikan relay OFF sebelum pin menjadi output. Relay digerakkan setHeater() dan setLamp() lewat digitalWrite() (aktif LOW).                                                                          | Dipakai heater dan lampu; polaritas aktif-LOW hanya diatur di satu tempat (RELAY_ON dan RELAY_OFF).                 |
+| Alarm              | setAlarm() menyimpan alasan alarm; updateAlarm() membunyikan buzzer 150 ms tiap 1 detik tanpa menahan program.                                                                                                     | Memisahkan keputusan alarm dari cara membunyikannya.                                                                |
+| Jam lokal          | setTimezone() menyetel zona waktu dari dashboard dan memulai NTP; minuteOfDay() memberi menit sejak 00:00 (atau -1 jika belum sinkron).                                                                            | Sumber waktu dan zona waktu dibutuhkan lampu saja; dipisah agar sumber waktu mudah diganti (misalnya RTC).          |
+| Heater             | Membaca DS18B20 secara berkala (non-blocking) dan memutuskan heater: hysteresis, mode manual, pengaman 36 °C.                                                                                                      | Semua yang berhubungan dengan suhu ada di satu modul.                                                               |
+| Lampu              | applyLamp() memilih mode otomatis atau manual dan menyalakan relay lampu; loop() memeriksanya tiap 1 detik.                                                                                                        | Jadwal bisa melewati tengah malam; logikanya (inSchedule) terpisah sehingga mudah diuji.                            |
+| Jaringan           | request() (GET atau POST ke backend), fetchConfig(), sendTelemetry(), dan networkTask() sebagai siklusnya. Wi-Fi dimulai di setup() dan tersambung ulang otomatis.                                                 | Berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer di core 1.                   |
+| Penyimpanan config | storeConfig() menyimpan dan loadSavedConfig() memulihkan config lewat Preferences (flash).                                                                                                                         | Config terakhir tetap ada setelah mati listrik; flash ditulis hanya saat ada perubahan.                             |
+| setup() dan loop() | setup() menginisialisasi pin, sensor, config dari flash, zona waktu, Wi-Fi, dan task jaringan; loop() menjalankan config baru lalu memanggil updateHeater(), pemeriksaan jadwal lampu, dan updateAlarm() berulang. | Titik awal program; berisi pemanggilan saja, tanpa logika.                                                          |
 
 Alasan pembagian:
 
 1. Satu modul untuk satu perangkat keras (sensor, relay, buzzer, jam, Wi-Fi). Mengganti satu komponen hanya mengubah satu modul.
-2. Keputusan dipisah dari pelaksanaan: applyHeater()/applyLamp() memutuskan, setHeater()/setLamp()/switchRelay() melaksanakan.
+2. Keputusan dipisah dari pelaksanaan: applyHeater()/applyLamp() memutuskan, setHeater()/setLamp() menggerakkan relay.
 3. Pekerjaan lambat (Wi-Fi, HTTP) dipisah ke core 0; kontrol suhu, lampu, dan alarm di core 1 tidak pernah menunggu jaringan.
 4. Data antar-core dibatasi pada dua struct sederhana yang diakses lewat fungsi, sehingga mudah dijaga.
 5. Semua pin dan ambang ada di bagian konstanta paling atas.
@@ -48,38 +48,37 @@ Alasan pembagian:
 
 Lapis atas memanggil lapis di bawahnya.
 
-| Lapis              | Isi                                                                                                                                |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 5. Aplikasi        | `setup()`, `loop()` (core 1), `networkTask()` (core 0)                                                                             |
-| 4. Modul fitur     | Heater, Lampu, Alarm, Jam, Jaringan                                                                                                |
-| 3. Layanan bersama | Data bersama (`getConfig`, `getStatus`, `set…`), Relay (`initRelay`, `switchRelay`), Penyimpanan (`saveConfig`, `loadSavedConfig`) |
-| 2. Library         | DallasTemperature + OneWire, WiFi + HTTPClient, ArduinoJson, Preferences, time.h (SNTP), Arduino core + FreeRTOS                   |
-| 1. Perangkat keras | DS18B20 (D4), radio Wi-Fi, RAM 520 KB, flash (NVS), GPIO + timer (D18, D19, D5)                                                    |
+| Lapis              | Isi                                                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 5. Aplikasi        | `setup()`, `loop()` (core 1), `networkTask()` (core 0)                                                                                           |
+| 4. Modul fitur     | Heater, Lampu, Alarm, Jam, Jaringan                                                                                                              |
+| 3. Layanan bersama | Data bersama (`getConfig`, `getStatus`, `locked`), Relay (`initRelay`, `digitalWrite` aktif LOW), Penyimpanan (`storeConfig`, `loadSavedConfig`) |
+| 2. Library         | DallasTemperature + OneWire, WiFi + HTTPClient, ArduinoJson, Preferences, time.h (SNTP), Arduino core + FreeRTOS                                 |
+| 1. Perangkat keras | DS18B20 (D4), radio Wi-Fi, RAM 520 KB, flash (NVS), GPIO + timer (D18, D19, D5)                                                                  |
 
 ### Siapa Memanggil Siapa
 
 ```text
 setup()
-├── initHeater()          → initRelay(D18), sensor.begin()
-├── initLamp()            → initRelay(D19)
-├── initAlarm()           → pinMode(D5, OUTPUT)
+├── initRelay(D18), initRelay(D19)   relay OFF sebelum pin menjadi output
+├── pinMode(D5), sensor.begin()      buzzer dan DS18B20
 ├── loadSavedConfig()     → Preferences.getBytes()
 ├── setTimezone()         → configTzTime() (NTP mulai sinkron)
-└── startNetworkTask()    → xTaskCreatePinnedToCore (core 0)
+├── WiFi.begin()          → tersambung ulang otomatis
+└── xTaskCreatePinnedToCore()   → networkTask di core 0
 
 loop()   (core 1)
 ├── applyHeater(), applyLamp()   hanya jika configPending
 ├── updateHeater()        → requestTemperatures(), getTempCByIndex()
-│                           → applyHeater() → setHeater() → switchRelay(), setAlarm()
-├── updateLamp()          → applyLamp() → minuteOfDay(), inSchedule(), setLamp() → switchRelay()
-├── updateClock()         → catat sekali saat NTP sinkron
+│                           → applyHeater() → setHeater() → digitalWrite(), setAlarm()
+├── applyLamp() tiap 1 detik → minuteOfDay(), inSchedule(), setLamp() → digitalWrite()
 └── updateAlarm()         → digitalWrite(D5), beep 150 ms tiap 1 detik
 
 networkTask()   (core 0)
-├── connectWiFi()         → WiFi.begin(), maks. 15 detik
-├── fetchConfig()         → HTTPClient GET, deserializeJson(), parseClockTime(),
-│                           storeConfig() → saveConfig(), setTimezone()
-├── sendTelemetry()       → getStatus(), serializeJson(), HTTPClient POST
+├── WiFi.status()         → belum tersambung: catat log, tunggu
+├── fetchConfig()         → request(GET), deserializeJson(), parseClockTime(),
+│                           storeConfig(), setTimezone()
+├── sendTelemetry()       → getStatus(), serializeJson(), request(POST)
 └── vTaskDelay(pollFrequency)
 ```
 
@@ -103,7 +102,7 @@ Bagian ini menjelaskan apa yang dilakukan tiap modul dan bagaimana ESP32 berkomu
 1. Dasar: contoh pustaka (DS18x20_Temperature pada OneWire; DallasTemperature) yang memakai delay menunggu konversi.
 2. Modifikasi 1: setWaitForConversion(false) dan mesin keadaan IDLE → CONVERTING → BACA, sehingga loop() tidak berhenti selama ±800 ms.
 3. Modifikasi 2: nilai -127 dan 85 dianggap gagal; hasilnya NAN, heater dipaksa mati, alarm "Sensor error".
-4. Modifikasi 3: saat gagal, telemetry dilewati (server menolak suhu di luar rentang), sehingga dashboard menandai perangkat offline. Pelaporan khusus "Sensor Error" belum ada di versi ini.
+4. Modifikasi 3: saat gagal, firmware mengirim telemetry tanpa currentTemp dengan event "Sensor error", sehingga dashboard menampilkan Sensor Error.
 
 ### Jam lokal (NTP)
 
@@ -121,7 +120,7 @@ Bagian ini menjelaskan apa yang dilakukan tiap modul dan bagaimana ESP32 berkomu
 1. Dasar: contoh pewaktuan ESP32 Arduino (configTime dan getLocalTime) dengan satu zona tetap.
 2. Modifikasi 1: tabel IANA → POSIX untuk 25 zona yang ada di dashboard; zona di luar tabel dicatat di log dan jam dianggap tidak diketahui.
 3. Modifikasi 2: zona terakhir dibaca dari flash saat boot, sehingga NTP langsung berjalan begitu Wi-Fi tersambung, walau backend belum menjawab.
-4. Modifikasi 3: updateClock() mencatat sekali "[TIME] NTP synced" agar sinkronisasi terlihat saat demo.
+4. Modifikasi 3: minuteOfDay() mencatat sekali "[TIME] NTP synced" saat jam pertama kali valid, agar sinkronisasi terlihat saat demo.
 
 ### Modul relay 2 kanal (heater dan lampu)
 
@@ -153,7 +152,7 @@ Bagian ini menjelaskan apa yang dilakukan tiap modul dan bagaimana ESP32 berkomu
 
 1. Dasar: digitalWrite(HIGH) menyalakan buzzer terus-menerus.
 2. Modifikasi 1: pola bunyi 150 ms setiap 1 detik dengan (millis() % 1000) < 150, tanpa delay().
-3. Modifikasi 2: alasan alarm disimpan. "Temperature too high" dan "Temperature too low" dikirim sebagai event telemetry; "Sensor error" hanya tampil di log dan buzzer karena telemetry dilewati.
+3. Modifikasi 2: alasan alarm ("Temperature too high", "Temperature too low", "Sensor error") disimpan dan dikirim sebagai event telemetry.
 
 ### Wi-Fi dan klien REST API
 
@@ -168,9 +167,9 @@ Bagian ini menjelaskan apa yang dilakukan tiap modul dan bagaimana ESP32 berkomu
 **Pengembangan driver:**
 
 1. Dasar: contoh HTTPClient (GET sederhana).
-2. Modifikasi 1: dijalankan sebagai task terpisah di core 0 dengan urutan wajib baca config → loop() menjalankan → kirim telemetry.
+2. Modifikasi 1: dijalankan sebagai task terpisah di core 0 dengan urutan wajib baca config → loop() menjalankan → kirim telemetry. Wi-Fi dimulai di setup() dan tersambung ulang otomatis; saat belum tersambung task hanya mencatat log.
 3. Modifikasi 2: bila Wi-Fi atau backend gagal, config lama tetap dipakai; config baru disimpan di flash hanya jika berubah.
-4. Modifikasi 3: telemetry dilewati jika suhu belum pernah terbaca atau di luar −10..60 °C; field event hanya dikirim bila ada alasan alarm.
+4. Modifikasi 3: telemetry dilewati jika suhu belum pernah terbaca atau di luar −10..60 °C (kecuali laporan sensor gagal); field event hanya dikirim bila ada alasan alarm.
 
 ### Logika Heater
 
@@ -180,10 +179,10 @@ Bagian ini menjelaskan apa yang dilakukan tiap modul dan bagaimana ESP32 berkomu
 2. Heater mati jika suhu ≥ target + 0,5 °C.
 3. Di antara keduanya status tidak berubah. Contoh target 26 °C: nyala di bawah 25,5 °C, mati di 26,5 °C atau lebih.
 
-**Pengaman (semua mode, prioritas tertinggi):** sensor gagal terbaca, atau suhu ≥ 36 °C (`HEATER_CUTOFF_C`) → heater dipaksa mati dan alarm menyala. Mode `MANUAL` hanya mengikuti tombol dashboard di bawah pengaman ini.
+**Pengaman (semua mode, prioritas tertinggi):** sensor gagal terbaca, atau suhu ≥ 36 °C (`HEATER_CUTOFF_C`) → heater dipaksa mati, alarm menyala, dan sensor gagal dilaporkan ke dashboard. Mode `MANUAL` hanya mengikuti tombol dashboard di bawah pengaman ini.
 
 **Pembacaan DS18B20 tanpa menahan program (tiga keadaan):**
 
 1. **IDLE:** menunggu sampai `nextReadAt` (tiap 5 detik).
 2. **CONVERTING:** `requestTemperatures()`, lalu menunggu ≥ 800 ms.
-3. **BACA:** `getTempCByIndex(0)`. Nilai -127 (terputus) atau 85 (belum siap) berarti gagal: suhu = `NAN`, heater OFF, alarm "Sensor error". Selain itu `setTemperature()` lalu `applyHeater()`. Kembali ke IDLE.
+3. **BACA:** `getTempCByIndex(0)`. Nilai -127 (terputus) atau 85 (belum siap) berarti gagal: suhu = `NAN`, heater OFF, alarm "Sensor error". Selain itu suhu disimpan lalu `applyHeater()`. Kembali ke IDLE.

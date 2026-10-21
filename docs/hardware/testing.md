@@ -23,23 +23,23 @@ Cara menguji tiap modul perangkat. Tidak ada test otomatis, jadi pengujian dilak
 
 ### Sensor suhu DS18B20
 
-| Kode | Uji             | Langkah                                                          | Hasil yang diharapkan                                                                                                                             |
-| ---- | --------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T1   | Pembacaan dasar | Nyalakan ESP32, buka Serial Monitor 115200, rendam probe di air. | Muncul "DS18B20 sensors found: 1" dan "[TEMP] xx.xx C" tiap 5 detik.                                                                              |
-| T2   | Akurasi         | Bandingkan dengan termometer referensi di air yang sama.         | Selisih dalam ±0,5 °C.                                                                                                                            |
-| T3   | Sensor terputus | Cabut kabel data (D4) saat berjalan.                             | "[TEMP] Sensor read failed."; heater OFF; buzzer berbunyi; "[API] Telemetry skipped"; dashboard menandai perangkat offline setelah batas offline. |
-| T4   | Pull-up         | Ukur tegangan DQ saat bus diam dengan multimeter.                | Sekitar 3,3 V; jika 0 V, R1 belum terpasang.                                                                                                      |
-| T5   | Pemutus 36 °C   | Rendam probe di air hangat ±37 °C.                               | Heater OFF dan alarm "Temperature too high" walau mode manual ON.                                                                                 |
+| Kode | Uji             | Langkah                                                          | Hasil yang diharapkan                                                                                                   |
+| ---- | --------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| T1   | Pembacaan dasar | Nyalakan ESP32, buka Serial Monitor 115200, rendam probe di air. | Muncul "DS18B20 sensors found: 1" dan "[TEMP] xx.xx C" tiap 5 detik.                                                    |
+| T2   | Akurasi         | Bandingkan dengan termometer referensi di air yang sama.         | Selisih dalam ±0,5 °C.                                                                                                  |
+| T3   | Sensor terputus | Cabut kabel data (D4) saat berjalan.                             | "[TEMP] Sensor read failed."; heater OFF; buzzer berbunyi; dashboard menampilkan suhu "--" dan notifikasi Sensor Error. |
+| T4   | Pull-up         | Ukur tegangan DQ saat bus diam dengan multimeter.                | Sekitar 3,3 V; jika 0 V, R1 belum terpasang.                                                                            |
+| T5   | Pemutus 36 °C   | Rendam probe di air hangat ±37 °C.                               | Heater OFF dan alarm "Temperature too high" walau mode manual ON.                                                       |
 
 ### Jam lokal (NTP)
 
-| Kode | Uji                | Langkah                                                      | Hasil yang diharapkan                                                                                       |
-| ---- | ------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| T1   | Sinkron NTP        | Nyalakan ESP32 dengan Wi-Fi tersambung internet.             | "[TIME] Timezone Asia/Jakarta, syncing with NTP." lalu "[TIME] NTP synced: hh:mm:ss" dengan jam yang benar. |
-| T2   | Zona waktu         | Ganti zona waktu di dashboard.                               | Jam di log mengikuti zona baru pada siklus berikutnya.                                                      |
-| T3   | Zona tidak dikenal | Pilih zona yang tidak ada di tabel ZONES.                    | "Timezone ... is not in the firmware list"; lampu otomatis mati.                                            |
-| T4   | Jadwal lampu       | Atur jadwal mulai 2 menit dari sekarang pada mode AUTOMATIC. | "[LAMP] ON" tepat pada menit mulai dan "[LAMP] OFF" pada menit selesai.                                     |
-| T5   | Tanpa internet     | Nyalakan ESP32 tanpa Wi-Fi.                                  | Lampu otomatis mati (jam belum diketahui); lampu manual dan heater tetap bekerja.                           |
+| Kode | Uji                | Langkah                                                      | Hasil yang diharapkan                                                                                                                         |
+| ---- | ------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1   | Sinkron NTP        | Nyalakan ESP32 dengan Wi-Fi tersambung internet.             | "[TIME] Timezone Asia/Jakarta, syncing with NTP."; "[TIME] NTP synced: hh:mm" muncul saat jadwal lampu otomatis aktif, dengan jam yang benar. |
+| T2   | Zona waktu         | Ganti zona waktu di dashboard.                               | Jam di log mengikuti zona baru pada siklus berikutnya.                                                                                        |
+| T3   | Zona tidak dikenal | Pilih zona yang tidak ada di tabel ZONES.                    | "Timezone ... is not in the firmware list"; lampu otomatis mati.                                                                              |
+| T4   | Jadwal lampu       | Atur jadwal mulai 2 menit dari sekarang pada mode AUTOMATIC. | "[LAMP] ON" tepat pada menit mulai dan "[LAMP] OFF" pada menit selesai.                                                                       |
+| T5   | Tanpa internet     | Nyalakan ESP32 tanpa Wi-Fi.                                  | Lampu otomatis mati (jam belum diketahui); lampu manual dan heater tetap bekerja.                                                             |
 
 ### Modul relay 2 kanal (heater dan lampu)
 
@@ -61,13 +61,14 @@ Cara menguji tiap modul perangkat. Tidak ada test otomatis, jadi pengujian dilak
 
 ### Wi-Fi dan klien REST API
 
-| Kode | Uji          | Langkah                                  | Hasil yang diharapkan                                                        |
-| ---- | ------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| T1   | Koneksi      | Jalankan backend, upload firmware.       | "[WIFI] ... connected", "[API] Config: ...", "[API] Telemetry sent: ...".    |
-| T2   | Config baru  | Ubah suhu target di dashboard.           | Siklus berikutnya menampilkan nilai baru di log dan relay mengikuti.         |
-| T3   | Backend mati | Hentikan backend.                        | Log "failed (HTTP -1)"; heater dan lampu tetap jalan dengan config terakhir. |
-| T4   | Mati listrik | Cabut dan colok ESP32 saat backend mati. | "[CFG] Restored the last config from flash."                                 |
-| T5   | Kunci salah  | Ubah DEVICE_KEY di secrets.h.            | "(HTTP 401) A valid device key is required."                                 |
+| Kode | Uji          | Langkah                                  | Hasil yang diharapkan                                                                                 |
+| ---- | ------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| T1   | Koneksi      | Jalankan backend, upload firmware.       | "[WIFI] Connecting to ...", "[API] Config: ...", "[API] Telemetry sent: ...".                         |
+| T2   | Config baru  | Ubah suhu target di dashboard.           | Siklus berikutnya menampilkan nilai baru di log dan relay mengikuti.                                  |
+| T3   | Backend mati | Hentikan backend.                        | Log "failed (HTTP -1)"; heater dan lampu tetap jalan dengan config terakhir.                          |
+| T4   | Mati listrik | Cabut dan colok ESP32 saat backend mati. | "[CFG] Restored the last config from flash."                                                          |
+| T5   | Kunci salah  | Ubah DEVICE_KEY di secrets.h.            | "(HTTP 401) A valid device key is required."                                                          |
+| T6   | Wi-Fi mati   | Matikan router atau ubah WIFI_PASSWORD.  | "[WIFI] Not connected, waiting for auto-reconnect." tiap siklus; heater dan lampu manual tetap jalan. |
 
 ## Uji Logika Murni
 
