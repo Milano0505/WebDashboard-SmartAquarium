@@ -19,17 +19,23 @@
 
 Setiap informasi hanya ditulis di **satu** dokumen; dokumen lain cukup menautkan.
 
-| Yang berubah                                             | Dokumen yang diperbarui                   |
-| -------------------------------------------------------- | ----------------------------------------- |
-| Masalah, solusi, nilai sistem, etika dan dampak          | `docs/background.md`                      |
-| Blok sistem, aturan desain, alur data, kontrak perangkat | `docs/architecture.md`                    |
-| Endpoint, input/output, validasi, kode status            | `docs/api.md`                             |
-| Koleksi atau field Firestore, query                      | `docs/database.md`                        |
-| Struktur kode, halaman, notifikasi, keamanan, perintah   | `docs/development.md`                     |
-| Pin, pemasangan, koneksi, perilaku firmware              | `device/README.md`                        |
-| Fitur, cara menjalankan, variabel environment            | `README.md`                               |
-| Konteks atau aturan untuk Claude                         | `.claude/CLAUDE.md` atau `.claude/rules/` |
+| Yang berubah                                             | Dokumen yang diperbarui                       |
+| -------------------------------------------------------- | --------------------------------------------- |
+| Masalah, solusi, nilai sistem, etika dan dampak          | `docs/web/background.md`                      |
+| Blok sistem, aturan desain, alur data, kontrak perangkat | `docs/web/architecture.md`                    |
+| Endpoint, input/output, validasi, kode status            | `docs/web/api.md`                             |
+| Koleksi atau field Firestore, query                      | `docs/web/database.md`                        |
+| Struktur kode, halaman, notifikasi, keamanan, perintah   | `docs/web/development.md`                     |
+| Pemasangan, koneksi ke backend, perilaku firmware        | `device/README.md`                            |
+| Komponen, skema, pin, jalur daya                         | `docs/hardware/components.md`, `schematic.md` |
+| Rancangan hardware/software, ambang                      | `docs/hardware/design.md`                     |
+| Modul firmware, library, diagram, driver                 | `docs/hardware/software.md`                   |
+| Pengujian dan debugging perangkat                        | `docs/hardware/testing.md`                    |
+| Fitur, cara menjalankan, variabel environment            | `README.md`                                   |
+| Konteks atau aturan untuk Claude                         | `.claude/CLAUDE.md` atau `.claude/rules/`     |
 
+- Dokumentasi dashboard web ada di `docs/web/`, dokumentasi perangkat embedded di `docs/hardware/`. Jangan dicampur.
+- Berkas Word presentasi (`docs/web/presentasi-uts.docx`, `docs/hardware/presentasi-uts-embedded.docx`) dibuat dari isi dokumen di folder yang sama; perbarui jika isinya berubah.
 - Perubahan kode dan dokumentasinya masuk **commit yang sama**.
 - Tulis dengan bahasa sederhana: kalimat pendek, jelaskan istilah teknis saat pertama dipakai, utamakan tabel dan langkah bernomor.
 - Rapikan Markdown dengan Prettier: `npx prettier --write <file>.md` dari folder `frontend/`.

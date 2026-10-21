@@ -1,16 +1,19 @@
 /*
   Firmware ESP32 Smart Aquarium: heater dan lampu, terhubung ke REST API backend.
+  VERSI TANPA RTC: jam hanya dari NTP (butuh Wi-Fi dan internet).
   Pemberi pakan belum ada di perangkat keras, jadi feederStatus selalu "Idle".
 
-  Siklus setiap systemConfig.pollFrequency detik (urutan ini wajib, lihat docs/architecture.md):
+  Siklus setiap systemConfig.pollFrequency detik (urutan ini wajib, lihat docs/web/architecture.md):
     1. GET  /api/hardware/{aquariumId}/config     (task jaringan, core 0)
     2. Menjalankan config: heater dan lampu       (loop(), core 1)
     3. POST /api/hardware/{aquariumId}/telemetry  (task jaringan, core 0)
 
-  Heater dan lampu tetap dikontrol walau Wi-Fi atau backend mati, memakai config terakhir (disimpan di flash).
+  Heater tetap dikontrol walau Wi-Fi atau backend mati, memakai config terakhir (disimpan di flash).
+  Jadwal lampu otomatis hanya berjalan jika jam NTP sudah sinkron. Jika belum, lampu mati.
+  Lampu mode manual tidak bergantung pada jam.
 
   Isi file (urut dari atas):
-    Pin dan konstanta -> Data bersama -> Alarm -> Jam -> Heater -> Lampu -> Jaringan -> setup() dan loop()
+    Pin dan konstanta -> Data bersama -> Relay -> Alarm -> Jam -> Heater -> Lampu -> Jaringan -> setup() dan loop()
 */
 
 #include <Arduino.h>
@@ -19,9 +22,7 @@
 #include <HTTPClient.h>
 #include <OneWire.h>
 #include <Preferences.h>
-#include <RTClib.h>
 #include <WiFi.h>
-#include <Wire.h>
 #include <time.h>
 #include "secrets.h" // Wi-Fi, alamat backend, DEVICE_KEY (salin dari secrets.example.h)
 
@@ -32,11 +33,9 @@
 // ---------- Pin (sesuai diagram wiring) ----------
 
 constexpr uint8_t PIN_ONE_WIRE = 4;      // DS18B20 DAT
-constexpr uint8_t PIN_RELAY_HEATER = 18; // Relay IN1
-constexpr uint8_t PIN_RELAY_LAMP = 23;   // Relay IN2
-constexpr uint8_t PIN_BUZZER = 5;        // Buzzer aktif
-constexpr uint8_t PIN_SDA = 21;          // RTC DS3231
-constexpr uint8_t PIN_SCL = 22;
+constexpr uint8_t PIN_RELAY_HEATER = 18; // Relay heater IN
+constexpr uint8_t PIN_RELAY_LAMP = 19;   // Relay lampu IN
+constexpr uint8_t PIN_BUZZER = 5;        // Buzzer aktif (tidak dipakai jika buzzer tidak dipasang)
 
 // Modul relay umumnya active LOW. Jika relay bekerja terbalik, tukar nilainya
 constexpr uint8_t RELAY_ON = LOW;
@@ -57,8 +56,7 @@ constexpr uint32_t LAMP_CHECK_INTERVAL_MS = 1000; // Jarak pemeriksaan jadwal
 
 constexpr uint32_t WIFI_TIMEOUT_MS = 15000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
-constexpr uint32_t APPLY_TIMEOUT_MS = 4000;                  // Batas menunggu loop() menjalankan config sebelum telemetry
-constexpr uint32_t RTC_SYNC_INTERVAL_MS = 6UL * 3600 * 1000; // Jarak penyetelan ulang RTC dari NTP
+constexpr uint32_t APPLY_TIMEOUT_MS = 4000; // Batas menunggu loop() menjalankan config sebelum telemetry
 
 // ============================================================
 // Data bersama (loop() di core 1, task jaringan di core 0)
@@ -226,17 +224,13 @@ void updateAlarm() {
 }
 
 // ============================================================
-// Jam lokal
-// Dibaca dari NTP jika sudah sinkron, jika belum dari RTC DS3231 (tetap jalan tanpa internet).
-// RTC selalu menyimpan waktu lokal sesuai timezone dashboard.
+// Jam lokal (hanya NTP, tanpa RTC)
+// Jam belum diketahui sampai NTP sinkron (butuh Wi-Fi dan internet).
+// Setelah ESP32 reboot jam hilang dan harus sinkron ulang.
 // ============================================================
 
-static RTC_DS3231 rtc;
-static bool rtcReady = false;
-
-static char appliedZone[40] = "";      // Timezone yang sudah diproses
-static volatile bool rtcSyncDue = false; // true = RTC perlu disetel ulang dari NTP
-static uint32_t lastRtcSync = 0;
+static char appliedZone[40] = ""; // Timezone yang sudah diproses
+static bool timeSynced = false;   // Hanya untuk log "sudah sinkron" satu kali
 
 // ---------- Daftar zona waktu ----------
 
@@ -284,11 +278,10 @@ void setTimezone(const char* ianaName) {
     for (const ZoneRule& zone : ZONES) {
         if (strcmp(zone.iana, ianaName) != 0) continue;
         configTzTime(zone.posix, "pool.ntp.org", "time.google.com");
-        rtcSyncDue = true;
         Serial.printf("[TIME] Timezone %s, syncing with NTP.\n", ianaName);
         return;
     }
-    Serial.printf("[TIME] Timezone %s is not in the firmware list, using the RTC time as is.\n", ianaName);
+    Serial.printf("[TIME] Timezone %s is not in the firmware list, time is unknown.\n", ianaName);
 }
 
 // ---------- Baca waktu ----------
@@ -304,43 +297,17 @@ bool readSystemTime(tm* out) {
 // Menit sejak 00:00 waktu lokal, -1 jika jam belum diketahui
 int minuteOfDay() {
     tm local;
-    if (readSystemTime(&local)) return local.tm_hour * 60 + local.tm_min;
-    if (rtcReady) {
-        DateTime now = rtc.now();
-        return now.hour() * 60 + now.minute();
-    }
-    return -1;
+    if (!readSystemTime(&local)) return -1;
+    return local.tm_hour * 60 + local.tm_min;
 }
 
-// ---------- RTC ----------
-
-void initClock() {
-    Wire.begin(PIN_SDA, PIN_SCL);
-    rtcReady = rtc.begin();
-    if (!rtcReady) {
-        Serial.println("[RTC] Not found, check SDA/SCL. The lamp schedule needs NTP time.");
-        return;
-    }
-    if (rtc.lostPower()) {
-        Serial.println("[RTC] Lost power, set from build time until NTP syncs.");
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    }
-}
-
-// Menyetel RTC dari NTP secara berkala.
-// Semua akses RTC (I2C) dilakukan dari loop() agar tidak bentrok antar-core
+// Hanya mencatat satu kali ke serial saat NTP pertama kali sinkron (berguna saat demo)
 void updateClock() {
+    if (timeSynced) return;
     tm local;
-    if (!rtcReady || !readSystemTime(&local)) return;
-
-    bool due = rtcSyncDue || lastRtcSync == 0 || millis() - lastRtcSync >= RTC_SYNC_INTERVAL_MS;
-    if (!due) return;
-
-    rtc.adjust(DateTime(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min,
-                        local.tm_sec));
-    rtcSyncDue = false;
-    lastRtcSync = millis() | 1; // Tidak boleh 0 karena 0 berarti belum pernah sinkron
-    Serial.println("[RTC] Set from NTP.");
+    if (!readSystemTime(&local)) return;
+    timeSynced = true;
+    Serial.printf("[TIME] NTP synced: %02d:%02d:%02d\n", local.tm_hour, local.tm_min, local.tm_sec);
 }
 
 // ============================================================
@@ -351,8 +318,8 @@ static OneWire oneWire(PIN_ONE_WIRE);
 static DallasTemperature sensor(&oneWire);
 
 static bool heaterOn = false;
-static bool converting = false;     // true = sensor sedang konversi, hasil belum siap
-static bool hasReading = false;     // Sudah pernah mencoba membaca sensor
+static bool converting = false; // true = sensor sedang konversi, hasil belum siap
+static bool hasReading = false; // Sudah pernah mencoba membaca sensor
 static uint32_t nextReadAt = 0;
 static uint32_t convertingSince = 0;
 
@@ -468,11 +435,11 @@ void applyLamp() {
     RemoteConfig cfg = getConfig();
 
     if (!cfg.lampAuto) {
-        setLamp(cfg.lampManualOn); // MANUAL: ikuti tombol dashboard
+        setLamp(cfg.lampManualOn); // MANUAL: ikuti tombol dashboard (tidak butuh jam)
         return;
     }
 
-    // AUTOMATIC: jadwal nonaktif atau jam belum diketahui -> lampu mati
+    // AUTOMATIC: jadwal nonaktif atau jam NTP belum sinkron -> lampu mati
     int now = minuteOfDay();
     bool scheduled = cfg.lampScheduleOn && now >= 0 && inSchedule(now, cfg.lampStartMin, cfg.lampEndMin);
     setLamp(scheduled);
@@ -601,17 +568,14 @@ bool fetchConfig() {
 bool sendTelemetry() {
     DeviceStatus device = getStatus();
 
-    // Sensor gagal dengan alasan (event): kirim laporan tanpa currentTemp agar dashboard menampilkan "Sensor Error"
-    bool sensorFault = isnan(device.temperature) && device.event[0] != '\0';
-
-    // Server menolak suhu di luar -10..60 C, dan tanpa event tidak ada yang bisa dilaporkan
-    if (!sensorFault && (isnan(device.temperature) || device.temperature < -10 || device.temperature > 60)) {
+    // Server menolak suhu di luar -10..60 C, misalnya saat sensor terputus
+    if (isnan(device.temperature) || device.temperature < -10 || device.temperature > 60) {
         Serial.println("[API] Telemetry skipped: no valid temperature reading.");
         return false;
     }
 
     JsonDocument doc;
-    if (!sensorFault) doc["currentTemp"] = device.temperature;
+    doc["currentTemp"] = device.temperature;
     doc["heaterStatus"] = device.heaterOn ? "ON" : "OFF";
     doc["ledStatus"] = device.lampOn ? "ON" : "OFF";
     doc["feederStatus"] = "Idle"; // Pemberi pakan belum dipasang di perangkat keras
@@ -633,10 +597,6 @@ bool sendTelemetry() {
     if (code != 201) {
         logRequestError("Send telemetry", code, response);
         return false;
-    }
-    if (sensorFault) {
-        Serial.printf("[API] Sensor fault reported: %s\n", device.event);
-        return true;
     }
     Serial.printf("[API] Telemetry sent: %.1f C, heater %s, lamp %s\n", device.temperature,
                   device.heaterOn ? "ON" : "OFF", device.lampOn ? "ON" : "OFF");
@@ -683,12 +643,16 @@ void setup() {
     initHeater();
     initLamp();
     initAlarm();
-    initClock();
 
     loadSavedConfig();
+
+    // Pakai timezone terakhir dari flash agar NTP langsung berjalan begitu Wi-Fi tersambung,
+    // walau backend belum menjawab
+    setTimezone(getConfig().timezone);
+
     startNetworkTask();
 
-    Serial.println("=== SMART AQUARIUM READY ===");
+    Serial.println("=== SMART AQUARIUM READY (tanpa RTC) ===");
 }
 
 void loop() {

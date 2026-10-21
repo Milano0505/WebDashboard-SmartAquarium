@@ -76,12 +76,12 @@ Urutan ini penting: dashboard menganggap Feed Now selesai saat menerima telemetr
 
 Perilaku yang diharapkan dari perangkat:
 
-| Bagian | Aturan                                                                                                                                                        |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Heater | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di bawah `targetTemp − 0,5` dan mati di atas `targetTemp + 0,5`.                                 |
-| Lampu  | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di antara `startTime` dan `endTime` (zona waktu akuarium) jika `isActive`.                       |
-| Pakan  | `AUTOMATIC` memberi pakan pada jam di `schedules` yang aktif. `MANUAL` memberi pakan sekali setiap `lastTriggeredAt` berubah. Belum ada di firmware saat ini. |
-| Sensor | Jika sensor gagal, kirim telemetry **tanpa `currentTemp`** dengan `event` berisi alasannya. Backend membuat notifikasi **Sensor Error** sekali.               |
+| Bagian | Aturan                                                                                                                                                                                                                                                                |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heater | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di bawah `targetTemp − 0,5` dan mati di atas `targetTemp + 0,5`.                                                                                                                                         |
+| Lampu  | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di antara `startTime` dan `endTime` (zona waktu akuarium) jika `isActive`.                                                                                                                               |
+| Pakan  | `AUTOMATIC` memberi pakan pada jam di `schedules` yang aktif. `MANUAL` memberi pakan sekali setiap `lastTriggeredAt` berubah. Belum ada di firmware saat ini.                                                                                                         |
+| Sensor | Perangkat boleh melaporkan sensor rusak lewat telemetry **tanpa `currentTemp`** dengan `event`; backend lalu membuat notifikasi **Sensor Error** sekali. **Firmware saat ini belum melakukannya:** telemetry dilewati, sehingga dashboard menandai perangkat offline. |
 
 Aturan yang dipakai bersama backend dan frontend:
 
@@ -91,7 +91,7 @@ Aturan yang dipakai bersama backend dan frontend:
 | Feed Now menunggu | `feederConfig.lastTriggeredAt` lebih baru dari `realtimeState.lastUpdated` | `Dashboard.jsx` (`isFeedPending`)                                                  |
 | Format jam jadwal | `hh:mm AM/PM`, contoh `08:00 AM`                                           | Backend, frontend, dan firmware                                                    |
 
-Detail request dan response ada di [api.md](api.md#endpoint-perangkat); cara memasang firmware ada di [device/README.md](../device/README.md).
+Detail request dan response ada di [api.md](api.md#endpoint-perangkat); cara memasang firmware ada di [device/README.md](../../device/README.md).
 
 ## Pengaturan yang Harus Cocok
 
@@ -110,7 +110,7 @@ Detail request dan response ada di [api.md](api.md#endpoint-perangkat); cara mem
 | Frontend  | React 19, React Router 7, Vite 8, Tailwind CSS 4 (JavaScript/JSX, tanpa TypeScript) |
 | Backend   | Node.js 22, Express 5 (ES modules), Firebase Admin SDK, JWT, bcrypt                 |
 | Database  | Firebase Cloud Firestore                                                            |
-| Perangkat | ESP32 (Arduino), PlatformIO, sensor DS18B20, RTC DS3231, relay                      |
+| Perangkat | ESP32 (Arduino), PlatformIO, sensor DS18B20, relay, buzzer                          |
 | Alat      | npm (backend), pnpm 10 (frontend), Prettier                                         |
 
 Grafik suhu dan ikon dibuat sendiri dengan SVG, tanpa library tambahan.

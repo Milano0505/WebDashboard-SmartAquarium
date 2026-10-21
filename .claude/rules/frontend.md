@@ -5,7 +5,7 @@ paths:
 
 # Aturan frontend
 
-Halaman, interval pembaruan, dan status perangkat dijelaskan di `docs/development.md`. Jika perilaku tampilan berubah, perbarui dokumen itu.
+Halaman, interval pembaruan, dan status perangkat dijelaskan di `docs/web/development.md`. Jika perilaku tampilan berubah, perbarui dokumen itu.
 
 ## Data dan API
 

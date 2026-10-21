@@ -1,13 +1,13 @@
 ---
 paths:
     - "backend/**/*.js"
-    - "docs/api.md"
-    - "docs/database.md"
+    - "docs/web/api.md"
+    - "docs/web/database.md"
 ---
 
 # Aturan backend
 
-Struktur, alur request, notifikasi, dan keamanan dijelaskan di `docs/development.md`. Endpoint ada di `docs/api.md`, skema di `docs/database.md`. **Baca dokumen terkait sebelum mengubah route atau skema**, dan perbarui pada commit yang sama.
+Struktur, alur request, notifikasi, dan keamanan dijelaskan di `docs/web/development.md`. Endpoint ada di `docs/web/api.md`, skema di `docs/web/database.md`. **Baca dokumen terkait sebelum mengubah route atau skema**, dan perbarui pada commit yang sama.
 
 ## Akses akuarium
 
@@ -19,14 +19,14 @@ Struktur, alur request, notifikasi, dan keamanan dijelaskan di `docs/development
 - Endpoint dashboard memakai `requireAuth`; endpoint `/api/hardware/*` memakai `requireDeviceKey`.
 - Semua error dikirim sebagai `{ message }` berbahasa Inggris. Input tidak valid → `throw badRequest("pesan")` (`utils/errors.js`). Error tanpa `status` menjadi 500 dengan pesan umum.
 - Endpoint config hanya menerima field di `configRules`; field turunan (`durationHours`, `avgHoursOn/Off`, `lastTriggeredAt`) tidak boleh diterima dari klien.
-- URL memakai kata benda dengan tanda hubung (`temperature-config`); kode status mengikuti `docs/api.md`.
+- URL memakai kata benda dengan tanda hubung (`temperature-config`); kode status mengikuti `docs/web/api.md`.
 
 ## Menambah field pengaturan
 
 1. Aturan di `utils/config-validation.js` (`configRules`).
 2. Nilai awal di `config/defaults.js`.
 3. Fungsi `update*Config` di `frontend/src/api/service.js`.
-4. Perbarui `docs/database.md` dan `docs/api.md`.
+4. Perbarui `docs/web/database.md` dan `docs/web/api.md`.
 
 `patchConfig` di `routes/aquariums.js` hanya menyimpan field yang berubah, mengisi `updatedAt`, lalu membuat notifikasi bersama berisi nama pelaku.
 
@@ -34,7 +34,7 @@ Struktur, alur request, notifikasi, dan keamanan dijelaskan di `docs/development
 
 - `realtimeState` **hanya** ditulis oleh endpoint telemetry.
 - Suhu selalu Celsius; waktu memakai `FieldValue.serverTimestamp()` dan dikirim ke klien lewat `serializeFirestore()`.
-- Query dengan filter atau urutan di lebih dari satu field butuh indeks gabungan; catat query baru di `docs/database.md`.
+- Query dengan filter atau urutan di lebih dari satu field butuh indeks gabungan; catat query baru di `docs/web/database.md`.
 - Database yang terhubung adalah database sungguhan: **minta konfirmasi sebelum menulis atau memigrasi data**.
 
 ## Notifikasi

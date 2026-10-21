@@ -18,19 +18,24 @@ Browser (React)  ──JWT──▶  REST API (Express)  ◀──x-device-key�
 | `frontend/` | React 19 + Vite 8 + Tailwind CSS 4 + React Router 7 (JSX, tanpa TypeScript)           |
 | `backend/`  | Node.js 22 + Express 5 (ES modules) + Firebase Admin SDK                              |
 | `device/`   | Firmware ESP32 (PlatformIO, C++): heater, lampu, sensor suhu. Pemberi pakan belum ada |
-| `docs/`     | Dokumentasi sistem                                                                    |
+| `docs/`     | Dokumentasi: `web/` (dashboard) dan `hardware/` (perangkat embedded)                  |
 
 ## Dokumentasi
 
-| Dokumen                                         | Isi                                                         |
-| ----------------------------------------------- | ----------------------------------------------------------- |
-| [README.md](../README.md)                       | Fitur, cara menjalankan, variabel environment               |
-| [docs/background.md](../docs/background.md)     | Masalah, solusi, nilai sistem, etika dan dampak             |
-| [docs/architecture.md](../docs/architecture.md) | Blok sistem, aturan desain, alur data, kontrak perangkat    |
-| [docs/api.md](../docs/api.md)                   | Semua endpoint, validasi, kode status                       |
-| [docs/database.md](../docs/database.md)         | Skema Firestore, siapa menulis apa, query                   |
-| [docs/development.md](../docs/development.md)   | Struktur kode, notifikasi, keamanan, perintah, cara mencoba |
-| [device/README.md](../device/README.md)         | Firmware: pemasangan, koneksi, perilaku, masalah umum       |
+| Dokumen                                                       | Isi                                                         |
+| ------------------------------------------------------------- | ----------------------------------------------------------- |
+| [README.md](../README.md)                                     | Fitur, cara menjalankan, variabel environment               |
+| [docs/web/background.md](../docs/web/background.md)           | Masalah, solusi, nilai sistem, etika dan dampak             |
+| [docs/web/architecture.md](../docs/web/architecture.md)       | Blok sistem, aturan desain, alur data, kontrak perangkat    |
+| [docs/web/api.md](../docs/web/api.md)                         | Semua endpoint, validasi, kode status                       |
+| [docs/web/database.md](../docs/web/database.md)               | Skema Firestore, siapa menulis apa, query                   |
+| [docs/web/development.md](../docs/web/development.md)         | Struktur kode, notifikasi, keamanan, perintah, cara mencoba |
+| [docs/hardware/design.md](../docs/hardware/design.md)         | Rancangan embedded: pembagian hardware/software, ambang     |
+| [docs/hardware/components.md](../docs/hardware/components.md) | Komponen, spesifikasi, anggaran daya                        |
+| [docs/hardware/schematic.md](../docs/hardware/schematic.md)   | Skema rangkaian, sambungan pin, keselamatan                 |
+| [docs/hardware/software.md](../docs/hardware/software.md)     | Modul firmware, diagram, driver per modul                   |
+| [docs/hardware/testing.md](../docs/hardware/testing.md)       | Pengujian dan debugging perangkat                           |
+| [device/README.md](../device/README.md)                       | Firmware: pemasangan, koneksi, perilaku, masalah umum       |
 
 ## Perintah
 
