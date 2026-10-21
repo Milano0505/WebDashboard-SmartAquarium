@@ -1,6 +1,6 @@
 # Pengembangan
 
-Panduan untuk membaca dan mengubah kode backend dan frontend. Firmware ada di [device/README.md](../device/README.md).
+Panduan untuk membaca dan mengubah kode backend dan frontend. Firmware ada di [device/README.md](../../device/README.md).
 
 ## Perintah
 
@@ -132,7 +132,7 @@ Input yang sedang diedit (slider suhu, form jadwal) disimpan sebagai draft lokal
 - Status dibaca dari `realtimeState`, bukan dari tombol. Tombol hanya menyimpan perintah.
 - Badge: **Device online** (ada telemetry dalam batas offline), **Device offline**, atau **No device data**. Batas offline ada di [architecture.md](architecture.md#kontrak-dengan-perangkat).
 - Kartu Manual Control menampilkan "Waiting for the device…" jika perintah berbeda dari status nyata (heater/lampu), atau Feed Now lebih baru dari telemetry terakhir. Selama menunggu, Feed Now dinonaktifkan.
-- Sensor rusak: suhu tampil `--` dan notifikasi **Sensor Error** muncul.
+- Sensor rusak: suhu tampil `--` dan notifikasi **Sensor Error** muncul. Firmware saat ini tidak mengirim laporan ini, jadi perangkat terlihat offline; gunakan simulasi API untuk mencobanya.
 
 ### Browser notification
 

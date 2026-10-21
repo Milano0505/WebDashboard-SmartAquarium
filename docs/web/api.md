@@ -235,7 +235,7 @@ Respons `201`: `{ "status": "received", "timestamp": "…" }`. Yang dilakukan ba
 
 - Menulis `realtimeState` dan memperbarui statistik jam lampu.
 - **Normal:** menambah dokumen `telemetry_history`. Jika suhu baru keluar dari batas aman, membuat notifikasi **Temperature Alert** (sekali, bukan di setiap pembacaan).
-- **Sensor rusak** (tanpa `currentTemp`): `realtimeState.currentTemp` dikosongkan, tidak ada dokumen riwayat, dan notifikasi **Sensor Error** dibuat sekali sampai pembacaan normal kembali.
+- **Sensor rusak** (tanpa `currentTemp`): `realtimeState.currentTemp` dikosongkan, tidak ada dokumen riwayat, dan notifikasi **Sensor Error** dibuat sekali sampai pembacaan normal kembali. Firmware saat ini belum mengirim laporan ini ([architecture.md](architecture.md#kontrak-dengan-perangkat)).
 - Jika perangkat sebelumnya dinyatakan offline, membuat notifikasi **Device Back Online**.
 
 ## Kode Status

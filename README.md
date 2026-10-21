@@ -13,26 +13,26 @@ Frontend dan ESP32 tidak pernah mengakses database langsung. Semua data lewat RE
 
 ## Isi Repository
 
-| Folder      | Isi                                                     | Panduan                                    |
-| ----------- | ------------------------------------------------------- | ------------------------------------------ |
-| `frontend/` | Dashboard React 19 + Vite 8 + Tailwind CSS 4            | [docs/development.md](docs/development.md) |
-| `backend/`  | REST API Node.js 22 + Express 5 + Firebase Admin SDK    | [docs/api.md](docs/api.md)                 |
-| `device/`   | Firmware ESP32 (PlatformIO): heater, lampu, sensor suhu | [device/README.md](device/README.md)       |
-| `docs/`     | Dokumentasi sistem                                      | Lihat [Dokumentasi](#dokumentasi)          |
+| Folder      | Isi                                                         | Panduan                                            |
+| ----------- | ----------------------------------------------------------- | -------------------------------------------------- |
+| `frontend/` | Dashboard React 19 + Vite 8 + Tailwind CSS 4                | [docs/web/development.md](docs/web/development.md) |
+| `backend/`  | REST API Node.js 22 + Express 5 + Firebase Admin SDK        | [docs/web/api.md](docs/web/api.md)                 |
+| `device/`   | Firmware ESP32 (PlatformIO): heater, lampu, sensor suhu     | [device/README.md](device/README.md)               |
+| `docs/`     | Dokumentasi: `web/` (dashboard) dan `hardware/` (perangkat) | Lihat [Dokumentasi](#dokumentasi)                  |
 
 ## Fitur
 
-| Fitur         | Keterangan                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Monitoring    | Suhu terkini, status heater/lampu/pemberi pakan, status perangkat online/offline, dan grafik suhu.                                   |
-| Suhu          | Suhu target, batas aman, dan mode heater otomatis/manual.                                                                            |
-| Lampu         | Jadwal harian, mode otomatis/manual, dan rata-rata jam menyala per hari.                                                             |
-| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** (mode manual).                                                                 |
-| Riwayat       | Data dari perangkat dalam tabel dan kalender, dengan pencarian, filter, dan ekspor CSV.                                              |
-| Alerts        | Suhu di luar batas aman, sensor rusak, perangkat offline, dan catatan perubahan. Ada browser notification; tidak ada email atau SMS. |
-| Akun          | Register, login, foto profil, ganti nama dan password. Email tidak bisa diubah.                                                      |
-| Akses bersama | Semua akun mengontrol satu akuarium yang sama (default `aquarium-001`).                                                              |
-| Tampilan      | Responsif: sidebar di desktop, menu bawah di smartphone.                                                                             |
+| Fitur         | Keterangan                                                                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monitoring    | Suhu terkini, status heater/lampu/pemberi pakan, status perangkat online/offline, dan grafik suhu.                                             |
+| Suhu          | Suhu target, batas aman, dan mode heater otomatis/manual.                                                                                      |
+| Lampu         | Jadwal harian, mode otomatis/manual, dan rata-rata jam menyala per hari.                                                                       |
+| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** (mode manual).                                                                           |
+| Riwayat       | Data dari perangkat dalam tabel dan kalender, dengan pencarian, filter, dan ekspor CSV.                                                        |
+| Alerts        | Suhu di luar batas aman, perangkat offline (termasuk sensor rusak), dan catatan perubahan. Ada browser notification; tidak ada email atau SMS. |
+| Akun          | Register, login, foto profil, ganti nama dan password. Email tidak bisa diubah.                                                                |
+| Akses bersama | Semua akun mengontrol satu akuarium yang sama (default `aquarium-001`).                                                                        |
+| Tampilan      | Responsif: sidebar di desktop, menu bawah di smartphone.                                                                                       |
 
 **Batasan saat ini:** belum ada peran pengguna; semua akun punya akses yang sama.
 
@@ -58,7 +58,7 @@ Prasyarat: Node.js 22, pnpm, project Firebase dengan Firestore aktif, dan servic
     ```
 
 4. Buka `http://localhost:5173`, lalu register satu akun. Cek backend di `http://localhost:5000/api/health`.
-5. (Opsional) Pasang firmware ke ESP32: [device/README.md](device/README.md). Tanpa ESP32, data perangkat bisa disimulasikan lewat API ([docs/development.md](docs/development.md#mencoba-sistem)).
+5. (Opsional) Pasang firmware ke ESP32: [device/README.md](device/README.md). Tanpa ESP32, data perangkat bisa disimulasikan lewat API ([docs/web/development.md](docs/web/development.md#mencoba-sistem)).
 
 ## Variabel Environment
 
@@ -86,11 +86,18 @@ Jangan commit `.env`, `serviceAccountKey.json`, atau `.dev-jwt-secret` (sudah ad
 
 ## Dokumentasi
 
-| Dokumen                                      | Isi                                                                    |
-| -------------------------------------------- | ---------------------------------------------------------------------- |
-| [docs/background.md](docs/background.md)     | Masalah yang diselesaikan, nilai sistem, etika dan dampak              |
-| [docs/architecture.md](docs/architecture.md) | Blok sistem, aturan desain, alur data, kontrak dengan perangkat        |
-| [docs/api.md](docs/api.md)                   | Semua endpoint REST API                                                |
-| [docs/database.md](docs/database.md)         | Skema Firestore dan cara membuka database                              |
-| [docs/development.md](docs/development.md)   | Struktur kode, notifikasi, keamanan, perintah, cara mencoba sistem     |
-| [device/README.md](device/README.md)         | Firmware ESP32: pemasangan, koneksi ke backend, perilaku, masalah umum |
+| Dokumen                                                    | Isi                                                                    |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [docs/web/background.md](docs/web/background.md)           | Masalah yang diselesaikan, nilai sistem, etika dan dampak              |
+| [docs/web/architecture.md](docs/web/architecture.md)       | Blok sistem, aturan desain, alur data, kontrak dengan perangkat        |
+| [docs/web/api.md](docs/web/api.md)                         | Semua endpoint REST API                                                |
+| [docs/web/database.md](docs/web/database.md)               | Skema Firestore dan cara membuka database                              |
+| [docs/web/development.md](docs/web/development.md)         | Struktur kode, notifikasi, keamanan, perintah, cara mencoba sistem     |
+| [docs/hardware/design.md](docs/hardware/design.md)         | Rancangan embedded: pembagian hardware/software, ambang, status        |
+| [docs/hardware/components.md](docs/hardware/components.md) | Daftar komponen, spesifikasi, alasan pemilihan, anggaran daya          |
+| [docs/hardware/schematic.md](docs/hardware/schematic.md)   | Skema rangkaian, sambungan pin, jalur daya, keselamatan                |
+| [docs/hardware/software.md](docs/hardware/software.md)     | Modul firmware, library, diagram, driver per modul                     |
+| [docs/hardware/testing.md](docs/hardware/testing.md)       | Pengujian dan debugging tiap modul perangkat                           |
+| [device/README.md](device/README.md)                       | Firmware ESP32: pemasangan, koneksi ke backend, perilaku, masalah umum |
+
+Berkas Word untuk presentasi: [docs/web/presentasi-uts.docx](docs/web/presentasi-uts.docx) (dashboard web) dan [docs/hardware/presentasi-uts-embedded.docx](docs/hardware/presentasi-uts-embedded.docx) (perangkat embedded).
