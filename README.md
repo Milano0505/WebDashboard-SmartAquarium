@@ -22,17 +22,17 @@ Frontend dan ESP32 tidak pernah mengakses database langsung. Semua data lewat RE
 
 ## Fitur
 
-| Fitur         | Keterangan                                                                                                                                     |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monitoring    | Suhu terkini, status heater/lampu/pemberi pakan, status perangkat online/offline, dan grafik suhu.                                             |
-| Suhu          | Suhu target, batas aman, dan mode heater otomatis/manual.                                                                                      |
-| Lampu         | Jadwal harian, mode otomatis/manual, dan rata-rata jam menyala per hari.                                                                       |
-| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** (mode manual).                                                                           |
-| Riwayat       | Data dari perangkat dalam tabel dan kalender, dengan pencarian, filter, dan ekspor CSV.                                                        |
-| Alerts        | Suhu di luar batas aman, perangkat offline (termasuk sensor rusak), dan catatan perubahan. Ada browser notification; tidak ada email atau SMS. |
-| Akun          | Register, login, foto profil, ganti nama dan password. Email tidak bisa diubah.                                                                |
-| Akses bersama | Semua akun mengontrol satu akuarium yang sama (default `aquarium-001`).                                                                        |
-| Tampilan      | Responsif: sidebar di desktop, menu bawah di smartphone.                                                                                       |
+| Fitur         | Keterangan                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Monitoring    | Suhu terkini, status heater/lampu/pemberi pakan, status perangkat online/offline, dan grafik suhu.                                   |
+| Suhu          | Suhu target, batas aman, dan mode heater otomatis/manual.                                                                            |
+| Lampu         | Jadwal harian, mode otomatis/manual, dan rata-rata jam menyala per hari.                                                             |
+| Pakan         | Hingga 12 jadwal pakan harian dan tombol **Feed Now** (mode manual).                                                                 |
+| Riwayat       | Data dari perangkat dalam tabel dan kalender, dengan pencarian, filter, dan ekspor CSV.                                              |
+| Alerts        | Suhu di luar batas aman, sensor rusak, perangkat offline, dan catatan perubahan. Ada browser notification; tidak ada email atau SMS. |
+| Akun          | Register, login, foto profil, ganti nama dan password. Email tidak bisa diubah.                                                      |
+| Akses bersama | Semua akun mengontrol satu akuarium yang sama (default `aquarium-001`).                                                              |
+| Tampilan      | Responsif: sidebar di desktop, menu bawah di smartphone.                                                                             |
 
 **Batasan saat ini:** belum ada peran pengguna; semua akun punya akses yang sama.
 

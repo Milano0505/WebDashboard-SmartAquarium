@@ -76,12 +76,12 @@ Urutan ini penting: dashboard menganggap Feed Now selesai saat menerima telemetr
 
 Perilaku yang diharapkan dari perangkat:
 
-| Bagian | Aturan                                                                                                                                                                                                                                                                |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Heater | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di bawah `targetTemp − 0,5` dan mati di atas `targetTemp + 0,5`.                                                                                                                                         |
-| Lampu  | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di antara `startTime` dan `endTime` (zona waktu akuarium) jika `isActive`.                                                                                                                               |
-| Pakan  | `AUTOMATIC` memberi pakan pada jam di `schedules` yang aktif. `MANUAL` memberi pakan sekali setiap `lastTriggeredAt` berubah. Belum ada di firmware saat ini.                                                                                                         |
-| Sensor | Perangkat boleh melaporkan sensor rusak lewat telemetry **tanpa `currentTemp`** dengan `event`; backend lalu membuat notifikasi **Sensor Error** sekali. **Firmware saat ini belum melakukannya:** telemetry dilewati, sehingga dashboard menandai perangkat offline. |
+| Bagian | Aturan                                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heater | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di bawah `targetTemp − 0,5` dan mati di atas `targetTemp + 0,5`.                                 |
+| Lampu  | `MANUAL` mengikuti `manualControlState`. `AUTOMATIC` menyala di antara `startTime` dan `endTime` (zona waktu akuarium) jika `isActive`.                       |
+| Pakan  | `AUTOMATIC` memberi pakan pada jam di `schedules` yang aktif. `MANUAL` memberi pakan sekali setiap `lastTriggeredAt` berubah. Belum ada di firmware saat ini. |
+| Sensor | Jika sensor gagal, kirim telemetry **tanpa `currentTemp`** dengan `event` berisi alasannya. Backend membuat notifikasi **Sensor Error** sekali.               |
 
 Aturan yang dipakai bersama backend dan frontend:
 

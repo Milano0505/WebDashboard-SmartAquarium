@@ -36,7 +36,7 @@ Setiap fitur punya **mode otomatis** (sistem bekerja sesuai aturan) dan **mode m
 
 1. **Pemantauan jarak jauh.** Kondisi akuarium bisa dilihat dari mana saja, termasuk apakah perangkat masih online.
 2. **Otomatisasi berbasis aturan.** Aturan (suhu target, jadwal lampu) diubah dari web tanpa memprogram ulang perangkat.
-3. **Peringatan proaktif.** Sistem yang memberi tahu saat suhu di luar batas atau perangkat offline (sensor rusak saat ini terlihat sebagai perangkat offline).
+3. **Peringatan proaktif.** Sistem yang memberi tahu saat suhu di luar batas, sensor rusak, atau perangkat offline.
 4. **Umpan balik perintah.** Dashboard membedakan _perintah_ pengguna dari _status nyata_ perangkat, dan menampilkan "Waiting for the device…" jika belum dijalankan.
 5. **Data untuk keputusan.** Riwayat, grafik, dan statistik jam lampu membantu melihat pola.
 6. **Jejak perubahan.** Setiap perubahan pengaturan dicatat beserta nama pengubahnya.

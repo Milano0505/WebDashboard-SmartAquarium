@@ -14,7 +14,7 @@ Pin dan polaritas relay diatur di bagian atas [src/main.cpp](src/main.cpp) (`REL
 
 1. Salin `include/secrets.example.h` menjadi `include/secrets.h` (file ini ada di `.gitignore`), lalu isi nilainya (lihat tabel di bawah).
 2. Jalankan backend, lalu **Upload** dari PlatformIO.
-3. Buka Serial Monitor (115200). Pastikan muncul `[WIFI] ... connected`, `[API] Config: ...`, dan `[API] Telemetry sent: ...`.
+3. Buka Serial Monitor (115200). Pastikan muncul `[WIFI] Connecting ...`, `[API] Config: ...`, dan `[API] Telemetry sent: ...`.
 
 ## Menghubungkan ke backend
 
@@ -50,16 +50,16 @@ Persiapan di sisi backend:
 
 Semua kode ada di satu file, [src/main.cpp](src/main.cpp), dengan bagian berikut (urut dari atas). Penjelasan modul, diagram, dan driver ada di [docs/hardware/software.md](../docs/hardware/software.md).
 
-| Bagian              | Isi                                                             |
-| ------------------- | --------------------------------------------------------------- |
-| Pin dan konstanta   | Pin, polaritas relay, batas suhu, interval                      |
-| Data bersama        | Config dan status antar-core; config terakhir disimpan di flash |
-| Relay dan Alarm     | Helper relay dan buzzer                                         |
-| Jam lokal           | Jam dari NTP (zona waktu dashboard), tanpa RTC                  |
-| Heater              | Sensor suhu dan relay heater                                    |
-| Lampu               | Relay lampu dan jadwal                                          |
-| Jaringan            | Wi-Fi, `GET /config`, `POST /telemetry`, siklus di core 0       |
-| `setup()`, `loop()` | Inisialisasi dan menjalankan config                             |
+| Bagian              | Isi                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Pin dan konstanta   | Pin, polaritas relay, batas suhu, interval                                                                   |
+| Data bersama        | Config dan status antar-core; config terakhir disimpan di flash                                              |
+| Relay dan Alarm     | Helper relay dan buzzer                                                                                      |
+| Jam lokal           | Jam dari NTP (zona waktu dashboard), tanpa RTC                                                               |
+| Heater              | Sensor suhu dan relay heater                                                                                 |
+| Lampu               | Relay lampu dan jadwal                                                                                       |
+| Jaringan            | `GET /config`, `POST /telemetry`, siklus di core 0; Wi-Fi dimulai di `setup()` dan tersambung ulang otomatis |
+| `setup()`, `loop()` | Inisialisasi dan menjalankan config                                                                          |
 
 Jaringan berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer di core 1. Urutan siklusnya: **baca config → `loop()` menjalankannya → kirim telemetry**.
 
@@ -68,9 +68,9 @@ Jaringan berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol he
 - **Heater `MANUAL`** mengikuti tombol di dashboard. **`AUTOMATIC`** menyala di bawah `targetTemp - 0.5` dan mati di atas `targetTemp + 0.5`.
 - **Lampu `MANUAL`** mengikuti tombol. **`AUTOMATIC`** menyala di antara jam mulai dan selesai jika jadwal aktif (boleh melewati tengah malam). Jam hanya dari NTP (butuh Wi-Fi dan internet); jika belum sinkron, lampu otomatis mati. Lampu manual tidak butuh jam.
 - **Pengaman heater** (semua mode): heater mati jika sensor gagal dibaca atau suhu mencapai `HEATER_CUTOFF_C` (36 °C).
-- **Alarm buzzer** berbunyi jika sensor gagal, atau suhu di luar batas min/maks dari dashboard. Alasan suhu di luar batas dikirim sebagai `event` telemetry; alasan sensor gagal hanya tampil di log dan buzzer.
+- **Alarm buzzer** berbunyi jika sensor gagal, atau suhu di luar batas min/maks dari dashboard. Alasannya dikirim sebagai `event` telemetry.
 - **Tanpa Wi-Fi atau backend**, heater dan lampu tetap berjalan dengan config terakhir. Setelah ESP32 mati lalu menyala lagi, config terakhir dipulihkan dari flash. Sebelum config pertama pernah diterima, semua keluaran mati.
-- **Sensor gagal belum dilaporkan ke dashboard.** Telemetry dilewati jika suhu belum pernah terbaca atau di luar -10..60 °C, sehingga dashboard menandai perangkat offline. Heater dimatikan dan buzzer berbunyi.
+- **Sensor gagal dilaporkan ke dashboard.** Perangkat mengirim telemetry tanpa `currentTemp` dengan `event` `Sensor error`; dashboard menampilkan suhu `--` dan notifikasi **Sensor Error**, dan perangkat tetap online. Telemetry baru dilewati (dashboard menandai offline) jika suhu belum pernah terbaca atau di luar -10..60 °C.
 - **Zona waktu** dibaca dari dashboard dan disimpan di flash, sehingga NTP langsung berjalan saat Wi-Fi tersambung. Zona yang tidak ada di daftar `src/main.cpp` membuat jam tidak diketahui (lampu otomatis mati). Setelah ESP32 menyala ulang, jam harus sinkron NTP lagi karena tidak ada RTC.
 
 Pengujian tiap modul perangkat ada di [docs/hardware/testing.md](../docs/hardware/testing.md).
@@ -87,14 +87,14 @@ Pengujian tiap modul perangkat ada di [docs/hardware/testing.md](../docs/hardwar
 
 | Yang terlihat di Serial Monitor                               | Penyebab                                                   | Solusi                                                                                             |
 | ------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `[WIFI] Connecting ... failed`                                | Nama/password salah, atau Wi-Fi 5 GHz                      | Periksa `secrets.h`; pakai jaringan 2,4 GHz                                                        |
+| `[WIFI] Not connected, waiting for auto-reconnect.`           | Nama/password salah, atau Wi-Fi 5 GHz                      | Periksa `secrets.h`; pakai jaringan 2,4 GHz                                                        |
 | `(HTTP -1)` connection refused                                | Backend tidak berjalan, IP salah, atau diblokir firewall   | Ulangi langkah 2–5 di [Menghubungkan ke backend](#menghubungkan-ke-backend)                        |
 | `(HTTP -11)` read timeout                                     | Jaringan lambat atau backend tidak menjawab                | Cek `/api/health` dari browser smartphone di Wi-Fi yang sama                                       |
 | `(HTTP 401)` `A valid device key is required.`                | `DEVICE_KEY` berbeda dengan `HARDWARE_API_KEY`             | Samakan nilainya, lalu upload ulang                                                                |
 | `(HTTP 503)` `Hardware API authentication is not configured.` | `HARDWARE_API_KEY` kosong di backend                       | Isi di `backend/.env` dan jalankan ulang backend                                                   |
 | `(HTTP 404)` `Aquarium was not found.`                        | `AQUARIUM_ID` salah, atau belum ada akun yang register     | Samakan dengan `SHARED_AQUARIUM_ID`; register satu akun dulu                                       |
 | `(HTTP 400)` pesan validasi                                   | Isi telemetry tidak valid                                  | Baca pesannya; nilai yang diterima ada di [docs/web/api.md](../docs/web/api.md#endpoint-perangkat) |
-| `[TEMP] Sensor read failed.` lalu `[API] Telemetry skipped`   | Sensor DS18B20 putus atau salah pasang                     | Periksa kabel data (D4) dan resistor pull-up                                                       |
+| `[TEMP] Sensor read failed.` lalu `[API] Telemetry sent`      | Sensor DS18B20 putus atau salah pasang                     | Periksa kabel data (D4) dan resistor pull-up                                                       |
 | Lampu otomatis tidak menyala, tidak ada `[TIME] NTP synced`   | NTP belum sinkron (tanpa internet) atau zona tidak dikenal | Cek internet di Wi-Fi yang sama; pakai zona yang ada di daftar `src/main.cpp`                      |
 
 ## Keamanan
