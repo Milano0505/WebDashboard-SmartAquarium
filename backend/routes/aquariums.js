@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { findAquarium } from "../config/aquarium.js";
+import { findAquarium, invalidateConfigCache } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { configRules, validateTemperatureRange } from "../utils/config-validation.js";
@@ -127,6 +127,7 @@ function patchConfig(section, successMessage) {
             }),
         );
         await batch.commit();
+        invalidateConfigCache();
         return res.json({ updatedAt: new Date().toISOString(), message: successMessage });
     };
 }
@@ -228,6 +229,7 @@ router.post("/:aquariumId/feeder/trigger", async (req, res) => {
         }),
     );
     await batch.commit();
+    invalidateConfigCache();
     return res.json({ status: "triggered", message: "Feed command sent." });
 });
 

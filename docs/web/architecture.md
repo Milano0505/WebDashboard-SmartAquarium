@@ -53,7 +53,7 @@ Contoh: mengubah suhu target menjadi 26.
 ### Perangkat mengirim data
 
 1. Perangkat memanggil `POST /api/hardware/aquarium-001/telemetry` dengan suhu dan status nyata.
-2. Backend menulis `realtimeState`, menambah dokumen `telemetry_history`, memperbarui statistik lampu, dan membuat notifikasi jika perlu (suhu di luar batas, sensor rusak, perangkat kembali online).
+2. Backend menulis `realtimeState`, memperbarui statistik lampu, menambah dokumen `telemetry_history` jika syaratnya terpenuhi ([api.md](api.md#post-apihardwareidtelemetry)), dan membuat notifikasi jika perlu (suhu di luar batas, sensor rusak, perangkat kembali online).
 3. Dashboard menampilkan data baru pada pembaruan berikutnya.
 
 ### Feed Now
@@ -66,13 +66,22 @@ Contoh: mengubah suhu target menjadi 26.
 
 ## Kontrak dengan Perangkat
 
-Setiap `systemConfig.pollFrequency` detik, perangkat menjalankan siklus ini **dengan urutan ini**:
+Perangkat memakai **dua ritme** agar perintah dashboard cepat berjalan tanpa membanjiri database:
+
+| Ritme    | Kapan                                                                                                  | Isi                                              |
+| -------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Perintah | Tiap 3 detik (tetap di firmware, `COMMAND_POLL_MS`)                                                    | Baca pengaturan, lalu jalankan                   |
+| Data     | Tiap `systemConfig.pollFrequency` detik, atau **segera** saat status heater, lampu, atau alarm berubah | Kirim suhu dan status nyata (`POST …/telemetry`) |
+
+Siklus perangkat berjalan **dengan urutan ini**:
 
 1. **Baca pengaturan:** `GET /api/hardware/{aquariumId}/config`.
 2. **Jalankan pengaturan:** heater, lampu, dan pemberi pakan.
-3. **Kirim data:** `POST /api/hardware/{aquariumId}/telemetry`.
+3. **Kirim data:** `POST /api/hardware/{aquariumId}/telemetry`, hanya jika sudah waktunya atau status berubah.
 
 Urutan ini penting: dashboard menganggap Feed Now selesai saat menerima telemetry pertama setelah perintah dikirim. Jika telemetry dikirim sebelum perintah dijalankan, status "Waiting" hilang terlalu cepat.
+
+Karena `GET …/config` dipanggil tiap 3 detik, backend menyimpan jawabannya di memori (`findAquariumForDevice`). Cache dibatalkan setiap kali dashboard mengubah pengaturan atau menekan Feed Now, dan paling lama berlaku 60 detik. Tanpa cache, setiap panggilan menjadi satu pembacaan Firestore.
 
 Perilaku yang diharapkan dari perangkat:
 

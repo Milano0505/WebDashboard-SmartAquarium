@@ -207,7 +207,7 @@ Respons `200`: pengaturan yang perlu dijalankan perangkat.
         "avgHoursOff": null
     },
     "feederConfig": { "mode": "MANUAL", "schedules": [], "lastTriggeredAt": null },
-    "systemConfig": { "pollFrequency": 5, "timezone": "Asia/Jakarta" }
+    "systemConfig": { "pollFrequency": 30, "timezone": "Asia/Jakarta" }
 }
 ```
 
@@ -234,7 +234,7 @@ Respons `200`: pengaturan yang perlu dijalankan perangkat.
 Respons `201`: `{ "status": "received", "timestamp": "…" }`. Yang dilakukan backend:
 
 - Menulis `realtimeState` dan memperbarui statistik jam lampu.
-- **Normal:** menambah dokumen `telemetry_history`. Jika suhu baru keluar dari batas aman, membuat notifikasi **Temperature Alert** (sekali, bukan di setiap pembacaan).
+- **Normal:** menambah dokumen `telemetry_history` hanya jika status heater, lampu, atau pakan berubah dari `realtimeState` sebelumnya, suhu baru keluar dari batas, atau sudah sekitar 60 detik sejak riwayat terakhir (`deviceMonitor.lastHistoryAt`). Jika suhu baru keluar dari batas aman, membuat notifikasi **Temperature Alert** (sekali, bukan di setiap pembacaan).
 - **Sensor rusak** (tanpa `currentTemp`): `realtimeState.currentTemp` dikosongkan, tidak ada dokumen riwayat, dan notifikasi **Sensor Error** dibuat sekali sampai pembacaan normal kembali.
 - Jika perangkat sebelumnya dinyatakan offline, membuat notifikasi **Device Back Online**.
 

@@ -61,14 +61,14 @@ Cara menguji tiap modul perangkat. Tidak ada test otomatis, jadi pengujian dilak
 
 ### Wi-Fi dan klien REST API
 
-| Kode | Uji          | Langkah                                  | Hasil yang diharapkan                                                                                 |
-| ---- | ------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| T1   | Koneksi      | Jalankan backend, upload firmware.       | "[WIFI] Connecting to ...", "[API] Config: ...", "[API] Telemetry sent: ...".                         |
-| T2   | Config baru  | Ubah suhu target di dashboard.           | Siklus berikutnya menampilkan nilai baru di log dan relay mengikuti.                                  |
-| T3   | Backend mati | Hentikan backend.                        | Log "failed (HTTP -1)"; heater dan lampu tetap jalan dengan config terakhir.                          |
-| T4   | Mati listrik | Cabut dan colok ESP32 saat backend mati. | "[CFG] Restored the last config from flash."                                                          |
-| T5   | Kunci salah  | Ubah DEVICE_KEY di secrets.h.            | "(HTTP 401) A valid device key is required."                                                          |
-| T6   | Wi-Fi mati   | Matikan router atau ubah WIFI_PASSWORD.  | "[WIFI] Not connected, waiting for auto-reconnect." tiap siklus; heater dan lampu manual tetap jalan. |
+| Kode | Uji          | Langkah                                  | Hasil yang diharapkan                                                                                  |
+| ---- | ------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| T1   | Koneksi      | Jalankan backend, upload firmware.       | "[WIFI] Connecting to ...", "[API] Config: ...", "[API] Telemetry sent: ...".                          |
+| T2   | Config baru  | Ubah suhu target di dashboard.           | Siklus berikutnya menampilkan nilai baru di log dan relay mengikuti.                                   |
+| T3   | Backend mati | Hentikan backend.                        | Log "failed (HTTP -1)"; heater dan lampu tetap jalan dengan config terakhir.                           |
+| T4   | Mati listrik | Cabut dan colok ESP32 saat backend mati. | "[CFG] Restored the last config from flash."                                                           |
+| T5   | Kunci salah  | Ubah DEVICE_KEY di secrets.h.            | "(HTTP 401) A valid device key is required."                                                           |
+| T6   | Wi-Fi mati   | Matikan router atau ubah WIFI_PASSWORD.  | "[WIFI] Not connected, waiting for auto-reconnect." tiap 3 detik; heater dan lampu manual tetap jalan. |
 
 ## Uji Logika Murni
 

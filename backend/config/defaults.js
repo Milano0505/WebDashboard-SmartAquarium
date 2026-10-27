@@ -43,7 +43,7 @@ export function createDefaultAquarium(userId) {
             lastTriggeredAt: null,
         },
         systemConfig: {
-            pollFrequency: 5,
+            pollFrequency: 30,
             timezone: "Asia/Jakarta",
         },
         lightingUsage: {},
