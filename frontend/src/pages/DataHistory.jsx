@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AQUARIUM_ID, exportTelemetry, getAquarium, getTelemetry } from "../api/service";
+import { exportTelemetry, getAquarium, getTelemetry } from "../api/service";
 import { ChevronLeft, ChevronRight, Download, Search } from "../components/Icons";
 import { Card, ErrorAlert, PageHeader, Spinner, StatusBadge } from "../components/ui";
 
@@ -35,8 +35,8 @@ const formatDateTime = timestamp =>
 const formatTime = timestamp =>
     new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
-async function downloadCsv() {
-    const { csv, filename } = await exportTelemetry(AQUARIUM_ID);
+async function downloadCsv(aquariumId) {
+    const { csv, filename } = await exportTelemetry(aquariumId);
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const link = document.createElement("a");
     link.href = url;
@@ -435,6 +435,7 @@ function CalendarTab({ records }) {
 // ---------- Halaman ----------
 
 export default function DataHistoryPage() {
+    const { activeAquariumId: AQUARIUM_ID } = useAuth();
     const [records, setRecords] = useState([]);
     const [timezone, setTimezone] = useState("Asia/Manila");
     const [loading, setLoading] = useState(true);

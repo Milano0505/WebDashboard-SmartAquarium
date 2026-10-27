@@ -1,13 +1,16 @@
 import { Router } from "express";
-import { AQUARIUM_ID, findAquarium, findAquariumForDevice } from "../config/aquarium.js";
+import { getAquarium, invalidateAquarium } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
-import { requireDeviceKey } from "../middleware/auth.js";
-import { offlineThresholdSeconds } from "../utils/device-status.js";
+import { requireDeviceKey, requireOwnAquarium } from "../middleware/auth.js";
+import { offlineThresholdSeconds, recordTelemetry } from "../utils/device-status.js";
 import { serializeFirestore } from "../utils/firestore.js";
-import { notificationsRef, sharedNotification } from "../utils/notifications.js";
+import { invalidateNotifications, notificationsRef, sharedNotification } from "../utils/notifications.js";
+import { invalidateTelemetry } from "../utils/telemetry-cache.js";
 
 const router = Router();
+// Kunci perangkat hanya berlaku untuk akuarium yang terdaftar bersamanya
 router.use(requireDeviceKey);
+router.use("/:aquariumId", requireOwnAquarium);
 
 const { FieldValue } = admin.firestore;
 const NOT_FOUND = { message: "Aquarium was not found." };
@@ -83,7 +86,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         return res.status(400).json({ message: "Device statuses are invalid." });
     }
 
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await getAquarium(req.params.aquariumId);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
     const now = new Date();
@@ -125,8 +128,9 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         // Notifikasi hanya sekali sampai pembacaan sensor normal kembali
         if (!sensorErrorNotified) {
             batch.set(
-                notificationsRef().doc(),
+                notificationsRef(aquarium.reference.id).doc(),
                 sharedNotification({
+                    aquariumId: aquarium.reference.id,
                     actorName: "Aquarium hardware",
                     title: "Sensor Error",
                     message: `The temperature sensor is not returning a valid reading (${event}). Check the sensor wiring.`,
@@ -138,7 +142,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         if (saveHistory) {
             batch.set(aquarium.reference.collection("telemetry_history").doc(), {
                 userId: null,
-                aquariumId: AQUARIUM_ID,
+                aquariumId: aquarium.reference.id,
                 timestamp: FieldValue.serverTimestamp(),
                 temp: currentTemp,
                 heaterState: heaterStatus,
@@ -152,8 +156,9 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         if (crossedLimit) {
             const isLow = currentTemp < min;
             batch.set(
-                notificationsRef().doc(),
+                notificationsRef(aquarium.reference.id).doc(),
                 sharedNotification({
+                    aquariumId: aquarium.reference.id,
                     actorName: "Aquarium hardware",
                     title: "Temperature Alert",
                     message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
@@ -165,8 +170,9 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
 
     if (cameBackOnline) {
         batch.set(
-            notificationsRef().doc(),
+            notificationsRef(aquarium.reference.id).doc(),
             sharedNotification({
+                aquariumId: aquarium.reference.id,
                 actorName: "Aquarium hardware",
                 title: "Device Back Online",
                 message: "The aquarium hardware is sending data again.",
@@ -176,11 +182,20 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
     }
 
     await batch.commit();
+
+    // Cache dibatalkan setelah penulisan berhasil agar pembaca berikutnya mendapat data terbaru
+    const aquariumId = aquarium.reference.id;
+    invalidateAquarium(aquariumId);
+    if (saveHistory) invalidateTelemetry(aquariumId);
+    if ((sensorFault && !sensorErrorNotified) || (!sensorFault && crossedLimit) || cameBackOnline) {
+        invalidateNotifications(aquariumId);
+    }
+    recordTelemetry(aquariumId, aquarium.data.systemConfig?.pollFrequency);
     return res.status(201).json({ status: "received", timestamp: now.toISOString() });
 });
 
 router.get("/:aquariumId/config", async (req, res) => {
-    const aquarium = await findAquariumForDevice(req.params.aquariumId);
+    const aquarium = await getAquarium(req.params.aquariumId);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     const { tempConfig, lightingConfig, feederConfig, systemConfig } = aquarium.data;
     return res.json(

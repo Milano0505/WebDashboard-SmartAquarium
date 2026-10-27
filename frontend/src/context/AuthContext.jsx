@@ -1,112 +1,155 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { logout as apiLogout, getToken, getUserProfile, updateUserProfile } from "../api/service";
+import { onAuthStateChanged } from "firebase/auth";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { logout as apiLogout, getAquariums, isAuthBusy, startSession, updateUserProfile } from "../api/service";
+import { auth } from "../firebase";
 
 const AuthContext = createContext(null);
-const USER_KEY = "sa_user";
+const ACTIVE_AQUARIUM_KEY = "sa_active_aquarium";
 
 // ---------- Fungsi bantu ----------
 
 // Versi lama bisa menyimpan URL blob: sebagai foto profil; URL ini rusak setelah reload
 const isBlobUrl = url => typeof url === "string" && url.startsWith("blob:");
 
-function readStoredUser() {
+function readActiveAquarium() {
     try {
-        const storedUser = JSON.parse(localStorage.getItem(USER_KEY));
-        return isBlobUrl(storedUser?.photoUrl) ? { ...storedUser, photoUrl: null } : storedUser;
+        return localStorage.getItem(ACTIVE_AQUARIUM_KEY);
     } catch {
         return null;
     }
 }
 
-function clearStoredUser() {
+function saveActiveAquarium(aquariumId) {
     try {
-        localStorage.removeItem(USER_KEY);
+        if (aquariumId) localStorage.setItem(ACTIVE_AQUARIUM_KEY, aquariumId);
+        else localStorage.removeItem(ACTIVE_AQUARIUM_KEY);
     } catch (error) {
-        console.warn("Unable to remove the saved user profile.", error);
+        console.warn("Unable to save the selected aquarium.", error);
     }
 }
 
 // ---------- Provider ----------
 
-// Simpan user di localStorage dan validasi ulang sesi ke API saat aplikasi dibuka
+// Status login dipegang Firebase Authentication (onAuthStateChanged). Profil, peran admin, dan daftar
+// akuarium diambil dari backend setiap aplikasi dibuka
 export function AuthProvider({ children }) {
     const [isAuthLoading, setIsAuthLoading] = useState(true);
-    const [user, setUser] = useState(readStoredUser);
+    const [user, setUser] = useState(null);
+    const [aquariums, setAquariums] = useState([]);
+    const [selectedAquariumId, setSelectedAquariumId] = useState(readActiveAquarium);
 
-    const saveUser = userData => {
-        localStorage.setItem(USER_KEY, JSON.stringify(userData));
-        setUser(userData);
-    };
+    const loadAquariums = useCallback(async () => {
+        const { aquariums: list } = await getAquariums();
+        setAquariums(list);
+        return list;
+    }, []);
+
+    // Dipanggil Login/Register setelah backend membalas profil
+    const signIn = useCallback(
+        async profile => {
+            setUser(profile);
+            await loadAquariums();
+        },
+        [loadAquariums],
+    );
+
+    const clearSession = useCallback(() => {
+        setUser(null);
+        setAquariums([]);
+    }, []);
 
     const signOut = async () => {
         try {
             await apiLogout();
         } finally {
-            setUser(null);
-            clearStoredUser();
+            clearSession();
         }
     };
 
-    // Jalan sekali saat aplikasi dibuka
+    // Jalan sekali saat aplikasi dibuka, lalu setiap status login Firebase berubah
     useEffect(() => {
         let isMounted = true;
 
+        const loadSession = async () => {
+            try {
+                const { userProfile } = await startSession();
+                if (isBlobUrl(userProfile.photoUrl)) {
+                    await updateUserProfile(userProfile.id, { photoUrl: null }).catch(error =>
+                        console.warn("Unable to clear a temporary profile photo URL.", error),
+                    );
+                    userProfile.photoUrl = null;
+                }
+                const { aquariums: list } = await getAquariums();
+                if (!isMounted) return;
+                setUser(userProfile);
+                setAquariums(list);
+            } catch (error) {
+                if (error.status === 401) {
+                    await apiLogout().catch(() => {});
+                    if (isMounted) clearSession();
+                } else {
+                    console.warn("Unable to validate the saved session.", error);
+                }
+            }
+        };
+
+        const unsubscribe = onAuthStateChanged(auth, async firebaseUser => {
+            if (!firebaseUser) {
+                if (isMounted) {
+                    clearSession();
+                    setIsAuthLoading(false);
+                }
+                return;
+            }
+            // Login/register sedang berjalan; mereka memuat sesi sendiri lewat signIn()
+            if (!isAuthBusy()) await loadSession();
+            if (isMounted) setIsAuthLoading(false);
+        });
+
         // Dipicu client API saat respons 401
         const handleUnauthorized = () => {
-            setUser(null);
-            setIsAuthLoading(false);
+            apiLogout().catch(() => {});
+            clearSession();
         };
         window.addEventListener("sa:unauthorized", handleUnauthorized);
 
-        const endSession = async () => {
-            try {
-                await apiLogout();
-            } catch (error) {
-                console.warn("Unable to clear the session token.", error);
-            }
-            clearStoredUser();
-            if (isMounted) setUser(null);
-        };
-
-        const validateSession = async () => {
-            try {
-                if (!user || !getToken()) {
-                    await endSession();
-                    return;
-                }
-
-                // Perbarui profil dari server
-                const profile = await getUserProfile(user.id || user.userId);
-                if (isBlobUrl(profile.photoUrl)) {
-                    await updateUserProfile(profile.id, { photoUrl: null }).catch(error =>
-                        console.warn("Unable to clear a temporary profile photo URL.", error),
-                    );
-                    profile.photoUrl = null;
-                }
-                if (isMounted) saveUser(profile);
-            } catch (error) {
-                if (error.status === 401 || error.status === 404) await endSession();
-                else console.warn("Unable to validate the saved session.", error);
-            } finally {
-                if (isMounted) setIsAuthLoading(false);
-            }
-        };
-
-        validateSession();
         return () => {
             isMounted = false;
+            unsubscribe();
             window.removeEventListener("sa:unauthorized", handleUnauthorized);
         };
-    }, []);
+    }, [clearSession]);
+
+    // Akuarium aktif: pilihan tersimpan jika masih bisa diakses, jika tidak yang pertama
+    const activeAquarium = aquariums.find(item => item.id === selectedAquariumId) || aquariums[0] || null;
+    const activeAquariumId = activeAquarium?.id ?? null;
+    const activeRole = activeAquarium?.role ?? null;
+
+    const selectAquarium = aquariumId => {
+        saveActiveAquarium(aquariumId);
+        setSelectedAquariumId(aquariumId);
+    };
+
+    const isAdmin = user?.role === "admin";
+    const canControl = activeRole === "owner" || activeRole === "admin";
 
     return (
         <AuthContext.Provider
             value={{
                 user,
-                setUser: saveUser,
+                setUser,
+                signIn,
                 signOut,
                 isAuthLoading,
-                isAuthenticated: Boolean(user && getToken()),
+                isAuthenticated: Boolean(user),
+                aquariums,
+                refreshAquariums: loadAquariums,
+                activeAquariumId,
+                activeRole,
+                selectAquarium,
+                isAdmin,
+                canControl,
+                canManageAccess: canControl,
             }}
         >
             {children}

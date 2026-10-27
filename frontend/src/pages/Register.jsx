@@ -19,7 +19,7 @@ export default function RegisterPage() {
     const [showPw, setShowPw] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
-    const { setUser } = useAuth();
+    const { signIn } = useAuth();
     const navigate = useNavigate();
     const fileRef = useRef();
 
@@ -69,7 +69,7 @@ export default function RegisterPage() {
                 password: form.password,
                 photoUrl,
             });
-            setUser(userProfile);
+            await signIn(userProfile);
             navigate("/dashboard", { replace: true });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Registration failed.");

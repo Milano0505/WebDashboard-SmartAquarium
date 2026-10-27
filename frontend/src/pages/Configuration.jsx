@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    AQUARIUM_ID,
     changePassword,
     getAquarium,
     updateSystemConfig,
@@ -479,6 +478,7 @@ function AboutTab() {
 // ---------- Halaman ----------
 
 export default function ConfigurationPage({ browserNotifications }) {
+    const { activeAquariumId: AQUARIUM_ID, canControl } = useAuth();
     const [tab, setTab] = useState("profile");
     const [aquarium, setAquarium] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -602,24 +602,32 @@ export default function ConfigurationPage({ browserNotifications }) {
             </div>
 
             {tab === "profile" && <ProfileTab />}
-            {tab === "system" && (
-                <SystemTab
-                    aquarium={aquarium}
-                    updateSection={updateSection}
-                    saving={settingsSaving}
-                    onSave={handleSaveSystem}
-                />
+            {(tab === "system" || tab === "alerts") && !canControl && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    You have view-only access to this aquarium. Ask an owner or admin to change its settings.
+                </div>
             )}
-            {tab === "alerts" && (
-                <AlertsTab
-                    aquarium={aquarium}
-                    updateSection={updateSection}
-                    saving={settingsSaving}
-                    onSave={handleSaveThresholds}
-                    browserNotifications={browserNotifications}
-                    onToggleBrowserNotifications={handleToggleBrowserNotifications}
-                />
-            )}
+            {/* Member hanya melihat: kontrol dimatikan (backend juga menolak dengan 403) */}
+            <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
+                {tab === "system" && (
+                    <SystemTab
+                        aquarium={aquarium}
+                        updateSection={updateSection}
+                        saving={settingsSaving}
+                        onSave={handleSaveSystem}
+                    />
+                )}
+                {tab === "alerts" && (
+                    <AlertsTab
+                        aquarium={aquarium}
+                        updateSection={updateSection}
+                        saving={settingsSaving}
+                        onSave={handleSaveThresholds}
+                        browserNotifications={browserNotifications}
+                        onToggleBrowserNotifications={handleToggleBrowserNotifications}
+                    />
+                )}
+            </fieldset>
             {tab === "about" && <AboutTab />}
         </div>
     );

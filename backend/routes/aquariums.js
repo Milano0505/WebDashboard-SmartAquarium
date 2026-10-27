@@ -1,16 +1,23 @@
 import { Router } from "express";
-import { findAquarium, invalidateConfigCache } from "../config/aquarium.js";
+import { aquariumsRef, findAquarium, invalidateAquarium } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { AQUARIUM_ROLES, hasRole } from "../utils/access.js";
 import { configRules, validateTemperatureRange } from "../utils/config-validation.js";
-import { badRequest } from "../utils/errors.js";
+import { badRequest, forbidden } from "../utils/errors.js";
 import { serializeFirestore } from "../utils/firestore.js";
-import { notificationsRef, sharedNotification } from "../utils/notifications.js";
+import {
+    invalidateNotifications,
+    notificationsRef,
+    recentNotifications,
+    sharedNotification,
+} from "../utils/notifications.js";
+import { cachedTelemetry } from "../utils/telemetry-cache.js";
 
 const router = Router();
 router.use(requireAuth);
 
-const { FieldValue, Timestamp } = admin.firestore;
+const { FieldPath, FieldValue, Timestamp } = admin.firestore;
 const NOT_FOUND = { message: "Aquarium was not found." };
 
 const FIELD_LABELS = {
@@ -87,7 +94,7 @@ function patchConfig(section, successMessage) {
         }
         const entries = rawEntries.map(([field, value]) => [field, rules[field](value)]);
 
-        const aquarium = await findAquarium(req.params.aquariumId);
+        const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
         if (!aquarium) return res.status(404).json(NOT_FOUND);
         if (section === "tempConfig") {
             validateTemperatureRange({ ...aquarium.data.tempConfig, ...Object.fromEntries(entries) });
@@ -118,8 +125,9 @@ function patchConfig(section, successMessage) {
         const batch = db.batch();
         batch.update(aquarium.reference, updates);
         batch.create(
-            notificationsRef().doc(),
+            notificationsRef(aquarium.reference.id).doc(),
             sharedNotification({
+                aquariumId: aquarium.reference.id,
                 actorId: req.auth.userId,
                 actorName: name,
                 title: SECTION_TITLES[section],
@@ -127,7 +135,8 @@ function patchConfig(section, successMessage) {
             }),
         );
         await batch.commit();
-        invalidateConfigCache();
+        invalidateAquarium(aquarium.reference.id);
+        invalidateNotifications(aquarium.reference.id);
         return res.json({ updatedAt: new Date().toISOString(), message: successMessage });
     };
 }
@@ -144,22 +153,26 @@ async function telemetryRecords(aquariumReference, query) {
         throw badRequest("startDate must be before endDate.");
     }
 
-    let request = aquariumReference.collection("telemetry_history").orderBy("timestamp", "desc");
-    if (startDate) request = request.where("timestamp", ">=", startDate);
-    if (endDate) request = request.where("timestamp", "<=", endDate);
-    const snapshot = await request.limit(limit).get();
+    const load = async () => {
+        let request = aquariumReference.collection("telemetry_history").orderBy("timestamp", "desc");
+        if (startDate) request = request.where("timestamp", ">=", startDate);
+        if (endDate) request = request.where("timestamp", "<=", endDate);
+        const snapshot = await request.limit(limit).get();
 
-    // Lewati dokumen yang tidak lengkap
-    return snapshot.docs
-        .map(document => ({ id: document.id, ...document.data() }))
-        .filter(
-            record =>
-                Number.isFinite(record.temp) &&
-                typeof record.heaterState === "string" &&
-                typeof record.ledState === "string" &&
-                typeof record.feederState === "string",
-        )
-        .map(serializeFirestore);
+        // Lewati dokumen yang tidak lengkap
+        return snapshot.docs
+            .map(document => ({ id: document.id, ...document.data() }))
+            .filter(
+                record =>
+                    Number.isFinite(record.temp) &&
+                    typeof record.heaterState === "string" &&
+                    typeof record.ledState === "string" &&
+                    typeof record.feederState === "string",
+            )
+            .map(serializeFirestore);
+    };
+    // Query dengan filter tanggal jarang dan beragam, jadi tidak disimpan
+    return startDate || endDate ? load() : cachedTelemetry(aquariumReference.id, limit, load);
 }
 
 // Escape sel CSV dan cegah formula spreadsheet (=, +, -, @)
@@ -182,7 +195,7 @@ function isVisibleTo(notification, userId) {
 }
 
 async function findNotification(req) {
-    const reference = notificationsRef().doc(req.params.notificationId);
+    const reference = notificationsRef(req.params.aquariumId).doc(req.params.notificationId);
     const snapshot = await reference.get();
     if (!snapshot.exists || !isVisibleTo(snapshot.data(), req.auth.userId)) return null;
     return { reference, data: snapshot.data() };
@@ -190,13 +203,33 @@ async function findNotification(req) {
 
 // ---------- Akuarium & konfigurasi ----------
 
+// Akuarium yang bisa diakses user: admin melihat semuanya, lainnya hanya yang mereka anggotai
+router.get("/", async (req, res) => {
+    const snapshot =
+        req.auth.role === "admin"
+            ? await aquariumsRef().get()
+            : await aquariumsRef().where("memberIds", "array-contains", req.auth.userId).get();
+    const aquariums = snapshot.docs
+        .map(document => ({
+            id: document.id,
+            name: document.get("name") || document.id,
+            role: req.auth.role === "admin" ? "admin" : document.get(new FieldPath("members", req.auth.userId)),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    return res.json({ aquariums });
+});
+
 router.get("/:aquariumId", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
-    const { systemConfig, ...data } = aquarium.data;
+    // Daftar anggota tidak ikut dikirim; ada di endpoint /members khusus owner
+    const { systemConfig, members, memberIds, ...data } = aquarium.data;
     return res.json(
         serializeFirestore({
             ...data,
+            id: aquarium.reference.id,
+            name: data.name || aquarium.reference.id,
+            role: aquarium.role,
             systemConfig: { pollFrequency: systemConfig?.pollFrequency, timezone: systemConfig?.timezone },
         }),
     );
@@ -208,7 +241,7 @@ router.patch("/:aquariumId/feeder-config", patchConfig("feederConfig", "Feeder c
 router.patch("/:aquariumId/system-config", patchConfig("systemConfig", "System config updated."));
 
 router.post("/:aquariumId/feeder/trigger", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (aquarium.data.feederConfig?.mode !== "MANUAL") {
         return res.status(409).json({ message: "Switch the feeder to manual mode before triggering it." });
@@ -220,8 +253,9 @@ router.post("/:aquariumId/feeder/trigger", async (req, res) => {
     // realtimeState tidak diubah karena hanya boleh diisi telemetry perangkat
     batch.update(aquarium.reference, { "feederConfig.lastTriggeredAt": FieldValue.serverTimestamp() });
     batch.create(
-        notificationsRef().doc(),
+        notificationsRef(aquarium.reference.id).doc(),
         sharedNotification({
+            aquariumId: aquarium.reference.id,
             actorId: req.auth.userId,
             actorName: name,
             title: "Feed Command Sent",
@@ -229,14 +263,15 @@ router.post("/:aquariumId/feeder/trigger", async (req, res) => {
         }),
     );
     await batch.commit();
-    invalidateConfigCache();
+    invalidateAquarium(aquarium.reference.id);
+    invalidateNotifications(aquarium.reference.id);
     return res.json({ status: "triggered", message: "Feed command sent." });
 });
 
 // ---------- Telemetry ----------
 
 router.get("/:aquariumId/telemetry/export", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (req.query.format && req.query.format !== "csv") throw badRequest("Only CSV export is supported.");
 
@@ -255,7 +290,7 @@ router.get("/:aquariumId/telemetry/export", async (req, res) => {
 });
 
 router.get("/:aquariumId/telemetry", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     const records = await telemetryRecords(aquarium.reference, req.query);
     return res.json({ telemetryRecords: records, total: records.length });
@@ -264,7 +299,7 @@ router.get("/:aquariumId/telemetry", async (req, res) => {
 // ---------- Notifikasi ----------
 
 router.get("/:aquariumId/notifications", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
     const limit = parseLimit(req.query.limit, 100);
@@ -274,17 +309,12 @@ router.get("/:aquariumId/notifications", async (req, res) => {
         throw badRequest('readStatus must be "read" or "unread".');
     }
 
-    // Ambil lebih banyak karena sebagian akan disaring per user
-    const snapshot = await notificationsRef()
-        .orderBy("timestamp", "desc")
-        .limit(limit * 5)
-        .get();
+    // Daftar terbaru dari cache (semua cakupan); disaring per user di sini
     const userId = req.auth.userId;
-    const notificationRecords = snapshot.docs
-        .map(document => {
-            const data = document.data();
+    const notificationRecords = (await recentNotifications(aquarium.reference.id))
+        .map(data => {
             const scope = data.scope === "user" ? "user" : "aquarium";
-            return { id: document.id, ...data, scope, userId: data.userId ?? null, userid: data.userid ?? null };
+            return { ...data, scope, userId: data.userId ?? null, userid: data.userid ?? null };
         })
         .filter(notification => isVisibleTo(notification, userId))
         .map(notification => ({ ...notification, isRead: isReadBy(notification, userId) }))
@@ -295,43 +325,49 @@ router.get("/:aquariumId/notifications", async (req, res) => {
 });
 
 router.patch("/:aquariumId/notifications/read-all", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
+    // Hanya notifikasi di daftar terbaru (yang tampil di Alerts); query "semua yang belum dibaca" akan membaca
+    // seluruh riwayat karena isRead notifikasi bersama tidak pernah berubah
     const userId = req.auth.userId;
-    const snapshot = await notificationsRef().where("isRead", "==", false).get();
-    const unread = snapshot.docs.filter(document => {
-        const data = document.data();
-        return isVisibleTo(data, userId) && !isReadBy(data, userId);
-    });
+    const aquariumId = aquarium.reference.id;
+    const unread = (await recentNotifications(aquariumId)).filter(
+        data => isVisibleTo(data, userId) && !isReadBy(data, userId),
+    );
 
     // Batas batch Firestore 500 operasi
-    for (let offset = 0; offset < unread.length; offset += 450) {
-        const batch = db.batch();
-        unread.slice(offset, offset + 450).forEach(document => {
-            batch.update(
-                document.ref,
-                document.get("scope") === "user" ? { isRead: true } : { readBy: FieldValue.arrayUnion(userId) },
-            );
-        });
-        await batch.commit();
+    try {
+        for (let offset = 0; offset < unread.length; offset += 450) {
+            const batch = db.batch();
+            unread.slice(offset, offset + 450).forEach(data => {
+                batch.update(
+                    notificationsRef(aquariumId).doc(data.id),
+                    data.scope === "user" ? { isRead: true } : { readBy: FieldValue.arrayUnion(userId) },
+                );
+            });
+            await batch.commit();
+        }
+    } finally {
+        invalidateNotifications(aquariumId);
     }
     return res.json({ message: "All notifications marked as read." });
 });
 
 router.patch("/:aquariumId/notifications/:notificationId/read", async (req, res) => {
-    if (!(await findAquarium(req.params.aquariumId))) return res.status(404).json(NOT_FOUND);
+    if (!(await findAquarium(req.params.aquariumId, req.auth))) return res.status(404).json(NOT_FOUND);
     const notification = await findNotification(req);
     if (!notification) return res.status(404).json({ message: "Notification was not found." });
 
     await notification.reference.update(
         notification.data.scope === "user" ? { isRead: true } : { readBy: FieldValue.arrayUnion(req.auth.userId) },
     );
+    invalidateNotifications(req.params.aquariumId);
     return res.json({ message: "Notification marked as read." });
 });
 
 router.delete("/:aquariumId/notifications/:notificationId", async (req, res) => {
-    if (!(await findAquarium(req.params.aquariumId))) return res.status(404).json(NOT_FOUND);
+    if (!(await findAquarium(req.params.aquariumId, req.auth))) return res.status(404).json(NOT_FOUND);
     const notification = await findNotification(req);
     if (!notification) return res.status(404).json({ message: "Notification was not found." });
 
@@ -341,7 +377,73 @@ router.delete("/:aquariumId/notifications/:notificationId", async (req, res) => 
     } else {
         await notification.reference.update({ dismissedBy: FieldValue.arrayUnion(req.auth.userId) });
     }
+    invalidateNotifications(req.params.aquariumId);
     return res.json({ message: "Notification deleted." });
+});
+
+// ---------- Anggota ----------
+
+// Owner mengelola member di akuarium miliknya. Mengangkat atau mengubah owner hanya boleh admin
+router.get("/:aquariumId/members", async (req, res) => {
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+
+    const entries = Object.entries(aquarium.data.members || {});
+    const profiles = entries.length
+        ? await db.getAll(...entries.map(([userId]) => db.collection("users").doc(userId)))
+        : [];
+    const members = entries.map(([userId, role], index) => ({
+        userId,
+        role,
+        fullName: profiles[index].get("fullName") || null,
+        email: profiles[index].get("email") || null,
+    }));
+    return res.json({ members });
+});
+
+router.put("/:aquariumId/members", async (req, res) => {
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const { role } = req.body;
+    if (!email || !AQUARIUM_ROLES.includes(role)) {
+        throw badRequest('Provide a user email and a role of "owner" or "member".');
+    }
+
+    const users = await db.collection("users").where("email", "==", email).limit(1).get();
+    if (users.empty) return res.status(404).json({ message: "No user with this email was found." });
+    const userId = users.docs[0].id;
+
+    const currentRole = aquarium.data.members?.[userId];
+    if (!hasRole(aquarium.role, "admin") && (role === "owner" || currentRole === "owner")) {
+        throw forbidden("Only an admin can assign or change an owner.");
+    }
+
+    await aquarium.reference.update(new FieldPath("members", userId), role, "memberIds", FieldValue.arrayUnion(userId));
+    invalidateAquarium(aquarium.reference.id);
+    return res.json({ userId, role, message: "Member saved." });
+});
+
+router.delete("/:aquariumId/members/:userId", async (req, res) => {
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+
+    const { userId } = req.params;
+    const currentRole = aquarium.data.members?.[userId];
+    if (!currentRole) return res.status(404).json({ message: "This user is not a member of the aquarium." });
+    if (currentRole === "owner" && !hasRole(aquarium.role, "admin")) {
+        throw forbidden("Only an admin can remove an owner.");
+    }
+
+    await aquarium.reference.update(
+        new FieldPath("members", userId),
+        FieldValue.delete(),
+        "memberIds",
+        FieldValue.arrayRemove(userId),
+    );
+    invalidateAquarium(aquarium.reference.id);
+    return res.json({ message: "Member removed." });
 });
 
 export default router;

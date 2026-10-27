@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-    AQUARIUM_ID,
     deleteNotification,
     getAquarium,
     getNotifications,
@@ -28,6 +27,7 @@ const TYPE_COUNTERS = [
 // ---------- Halaman ----------
 
 export default function NotificationsPage({ onCountChange, onSystemChange }) {
+    const { activeAquariumId: AQUARIUM_ID } = useAuth();
     const [items, setItems] = useState([]);
     const [timezone, setTimezone] = useState("Asia/Manila");
     const [loading, setLoading] = useState(true);

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app";
-import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+import { FieldPath, FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -32,4 +33,6 @@ const app = getApps()[0] || initializeApp({ credential: getCredential() });
 export const db = getFirestore(app);
 db.settings({ ignoreUndefinedProperties: true });
 
-export const admin = { firestore: { FieldValue, Timestamp } };
+export const auth = getAuth(app);
+
+export const admin = { firestore: { FieldPath, FieldValue, Timestamp } };
