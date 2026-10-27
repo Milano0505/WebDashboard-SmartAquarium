@@ -41,27 +41,28 @@ Prinsip pembagiannya:
 
 Setiap angka di firmware ([main.cpp](../../device/src/main.cpp), bagian Pin dan konstanta) dipilih berdasarkan kemampuan komponen.
 
-| Parameter                        | Nilai                       | Hubungan dengan hardware                                                                                                                    |
-| -------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Suhu target dashboard            | 10–35 °C                    | Jauh di dalam rentang sensor (−55 hingga +125 °C).                                                                                          |
-| Hysteresis heater                | ±0,5 °C                     | Sama dengan akurasi DS18B20 (±0,5 °C). Lebih kecil dari ini membuat relay hidup-mati terus karena noise dan memperpendek umur kontak relay. |
-| Pemutus heater (HEATER_CUTOFF_C) | 36 °C                       | Di atas target maks. 35 °C, jauh di bawah batas sensor 125 °C.                                                                              |
-| Telemetry yang diterima server   | −10 hingga 60 °C            | Di dalam rentang akurat DS18B20 (−10 hingga +85 °C); di luar itu dianggap salah baca.                                                       |
-| Nilai khusus sensor              | -127 dan 85                 | -127 = sensor terputus (DEVICE_DISCONNECTED_C). 85 = nilai awal sensor sebelum konversi selesai (datasheet).                                |
-| Konversi sensor                  | 800 ms                      | Konversi 12 bit membutuhkan maks. 750 ms; ditambah jeda aman 50 ms.                                                                         |
-| Jarak baca sensor                | 5 detik                     | Massa air besar sehingga suhu berubah lambat; tidak perlu lebih sering.                                                                     |
-| Pemeriksaan jadwal lampu         | 1 detik                     | Jadwal dalam satuan menit, 1 detik sudah lebih dari cukup.                                                                                  |
-| Validasi jam NTP                 | detik epoch > 1 700 000 000 | ESP32 mulai dari tahun 1970; nilai di bawah batas (tahun 2023) berarti NTP belum sinkron, sehingga jadwal lampu dianggap tidak ada.         |
-| Poll frequency                   | 1–60 detik (awal 5)         | Tiap siklus 2 request HTTP; interval pendek memperbanyak trafik Wi-Fi dan tulisan Firestore.                                                |
-| Batas waktu jaringan             | HTTP 5 s, tunggu config 4 s | Cukup untuk jaringan rumah, dan jaringan lambat tidak menahan kontrol (core berbeda).                                                       |
-| Arus pin ESP32                   | Puluhan mA                  | Buzzer (±30 mA) lewat transistor; relay lewat optocoupler pada modulnya.                                                                    |
-| Kontak relay                     | 10 A / 250 VAC              | Heater akuarium biasa (puluhan hingga ratusan watt) hanya menarik sekitar 0,2–1,5 A di 220 V.                                               |
+| Parameter                        | Nilai                       | Hubungan dengan hardware                                                                                                                                       |
+| -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Suhu target dashboard            | 10–35 °C                    | Jauh di dalam rentang sensor (−55 hingga +125 °C).                                                                                                             |
+| Hysteresis heater                | ±0,5 °C                     | Sama dengan akurasi DS18B20 (±0,5 °C). Lebih kecil dari ini membuat relay hidup-mati terus karena noise dan memperpendek umur kontak relay.                    |
+| Pemutus heater (HEATER_CUTOFF_C) | 36 °C                       | Di atas target maks. 35 °C, jauh di bawah batas sensor 125 °C.                                                                                                 |
+| Telemetry yang diterima server   | −10 hingga 60 °C            | Di dalam rentang akurat DS18B20 (−10 hingga +85 °C); di luar itu dianggap salah baca.                                                                          |
+| Nilai khusus sensor              | -127 dan 85                 | -127 = sensor terputus (DEVICE_DISCONNECTED_C). 85 = nilai awal sensor sebelum konversi selesai (datasheet).                                                   |
+| Konversi sensor                  | 800 ms                      | Konversi 12 bit membutuhkan maks. 750 ms; ditambah jeda aman 50 ms.                                                                                            |
+| Jarak baca sensor                | 5 detik                     | Massa air besar sehingga suhu berubah lambat; tidak perlu lebih sering.                                                                                        |
+| Pemeriksaan jadwal lampu         | 1 detik                     | Jadwal dalam satuan menit, 1 detik sudah lebih dari cukup.                                                                                                     |
+| Validasi jam NTP                 | detik epoch > 1 700 000 000 | ESP32 mulai dari tahun 1970; nilai di bawah batas (tahun 2023) berarti NTP belum sinkron, sehingga jadwal lampu dianggap tidak ada.                            |
+| Poll frequency                   | 1–60 detik (awal 30)        | Jarak telemetry (sensor). Perintah dashboard dibaca terpisah, jadi interval panjang tidak memperlambat on/off; interval pendek memperbanyak tulisan Firestore. |
+| Jarak baca config                | 3 detik                     | Perintah dari dashboard (heater, lampu) berjalan dalam ±3 detik. Aman bagi Firestore karena backend menyimpan jawaban `GET /config` di cache.                  |
+| Batas waktu jaringan             | HTTP 5 s, tunggu config 4 s | Cukup untuk jaringan rumah, dan jaringan lambat tidak menahan kontrol (core berbeda).                                                                          |
+| Arus pin ESP32                   | Puluhan mA                  | Buzzer (±30 mA) lewat transistor; relay lewat optocoupler pada modulnya.                                                                                       |
+| Kontak relay                     | 10 A / 250 VAC              | Heater akuarium biasa (puluhan hingga ratusan watt) hanya menarik sekitar 0,2–1,5 A di 220 V.                                                                  |
 
 ## Siklus Kerja
 
 1. **Core 0 (task jaringan):** jika Wi-Fi tersambung → `GET /config` → simpan config dan set `configPending = true`. Jika belum tersambung, hanya mencatat log.
 2. **Core 1 (`loop()`):** melihat `configPending`, menjalankan `applyHeater()` dan `applyLamp()`, lalu `configPending = false`.
-3. **Core 0:** menunggu `configPending` menjadi `false` (maks. 4 detik), lalu `POST /telemetry`, lalu jeda `pollFrequency` (1–60 detik).
+3. **Core 0:** menunggu `configPending` menjadi `false` (maks. 4 detik). Jika sudah `pollFrequency` detik (1–60) sejak telemetry terakhir, atau status heater, lampu, atau alarm berubah, kirim `POST /telemetry`. Lalu jeda 3 detik (`COMMAND_POLL_MS`) dan ulangi dari langkah 1.
 4. **Core 1 (berulang, tanpa menunggu):** `updateHeater()` tiap 5 detik, pemeriksaan jadwal lampu (`applyLamp()`) tiap 1 detik, dan `updateAlarm()` (beep 150 ms tiap 1 detik jika alarm aktif).
 5. Data antar-core (`RemoteConfig` dan `DeviceStatus`) dilindungi `portENTER_CRITICAL`.
 

@@ -34,9 +34,9 @@ Dibuat saat akun pertama register, dengan nilai awal dari `backend/config/defaul
 | `tempConfig`     | `unit`, `targetTemp`, `minTempThreshold`, `maxTempThreshold`, `mode`, `manualControlState`                       | Celsius, 24, 20, 30, `MANUAL`, `OFF` |
 | `lightingConfig` | `mode`, `manualControlState`, `schedule` (`startTime`, `endTime`, `durationHours`, `isActive`), `avgHoursOn/Off` | `MANUAL`, `OFF`, jadwal kosong       |
 | `feederConfig`   | `mode`, `schedules` (`{ time, isActive }`, maks. 12), `lastTriggeredAt`                                          | `MANUAL`, `[]`, `null`               |
-| `systemConfig`   | `pollFrequency` (detik), `timezone` (IANA)                                                                       | 5, `Asia/Manila`                     |
+| `systemConfig`   | `pollFrequency` (detik), `timezone` (IANA)                                                                       | 30, `Asia/Manila`                    |
 | `lightingUsage`  | Detik lampu ON/OFF per tanggal (7 hari terakhir), dasar `avgHoursOn/Off`                                         | `{}`                                 |
-| `deviceMonitor`  | Penanda notifikasi: `offlineNotified`, `sensorErrorNotified`                                                     | Dibuat saat dibutuhkan               |
+| `deviceMonitor`  | Penanda notifikasi `offlineNotified`, `sensorErrorNotified`; waktu riwayat terakhir `lastHistoryAt`              | Dibuat saat dibutuhkan               |
 | `updatedAt`      | Waktu perubahan pengaturan terakhir                                                                              | –                                    |
 
 `realtimeState.currentTemp` bernilai `null` saat sensor rusak. `lastUpdated` adalah waktu telemetry terakhir diterima server.
@@ -50,11 +50,11 @@ Dibuat saat akun pertama register, dengan nilai awal dari `backend/config/defaul
 | `feederConfig.lastTriggeredAt`                                                                                   | Server, saat **Feed Now**                                    |
 | `realtimeState`, `lightingUsage`, `avgHoursOn/Off`, riwayat suhu                                                 | Telemetry perangkat (`POST /api/hardware/…/telemetry`)       |
 | `deviceMonitor.offlineNotified`                                                                                  | Pengecekan offline berkala di server; direset oleh telemetry |
-| `deviceMonitor.sensorErrorNotified`                                                                              | Telemetry perangkat                                          |
+| `deviceMonitor.sensorErrorNotified`, `deviceMonitor.lastHistoryAt`                                               | Telemetry perangkat                                          |
 
 ## `aquariums/{id}/telemetry_history/{id}`
 
-Satu dokumen per telemetry normal. Telemetry tanpa suhu (sensor rusak) tidak dicatat.
+Satu dokumen per telemetry normal yang memenuhi syarat riwayat: status berubah, suhu baru keluar batas, atau sekitar 60 detik sejak riwayat terakhir ([api.md](api.md#post-apihardwareidtelemetry)). Telemetry tanpa suhu (sensor rusak) tidak dicatat.
 
 | Field         | Isi                                                  |
 | ------------- | ---------------------------------------------------- |

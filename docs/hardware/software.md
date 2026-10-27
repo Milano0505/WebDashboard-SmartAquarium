@@ -78,8 +78,9 @@ networkTask()   (core 0)
 ├── WiFi.status()         → belum tersambung: catat log, tunggu
 ├── fetchConfig()         → request(GET), deserializeJson(), parseClockTime(),
 │                           storeConfig(), setTimezone()
-├── sendTelemetry()       → getStatus(), serializeJson(), request(POST)
-└── vTaskDelay(pollFrequency)
+├── sendTelemetry()       → serializeJson(), request(POST); hanya tiap pollFrequency
+│                           atau saat status heater/lampu/alarm berubah
+└── vTaskDelay(COMMAND_POLL_MS)   3 detik
 ```
 
 ## Driver per Modul

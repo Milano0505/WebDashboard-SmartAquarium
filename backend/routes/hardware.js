@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { AQUARIUM_ID, findAquarium } from "../config/aquarium.js";
+import { AQUARIUM_ID, findAquarium, findAquariumForDevice } from "../config/aquarium.js";
 import { admin, db } from "../config/firebase.js";
 import { requireDeviceKey } from "../middleware/auth.js";
 import { offlineThresholdSeconds } from "../utils/device-status.js";
@@ -12,6 +12,8 @@ router.use(requireDeviceKey);
 const { FieldValue } = admin.firestore;
 const NOT_FOUND = { message: "Aquarium was not found." };
 const LIGHTING_USAGE_DAYS = 7;
+const HISTORY_INTERVAL_SECONDS = 60;
+const HISTORY_SLACK_SECONDS = 5; // Jeda antar-telemetry tidak presisi; tanpa ini riwayat bisa lompat ke siklus berikutnya
 
 // ---------- Fungsi bantu ----------
 
@@ -87,6 +89,23 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
     const now = new Date();
     const cameBackOnline = aquarium.data.deviceMonitor?.offlineNotified === true;
     const sensorErrorNotified = aquarium.data.deviceMonitor?.sensorErrorNotified === true;
+
+    // Riwayat dicatat saat status berubah, suhu baru keluar batas, atau tiap HISTORY_INTERVAL_SECONDS.
+    // realtimeState tetap diperbarui di setiap telemetry
+    const { minTempThreshold: min, maxTempThreshold: max } = aquarium.data.tempConfig || {};
+    const previous = aquarium.data.realtimeState || {};
+    const wasOutOfRange = Number.isFinite(previous.currentTemp) && isOutOfRange(previous.currentTemp, min, max);
+    const crossedLimit = !sensorFault && isOutOfRange(currentTemp, min, max) && !wasOutOfRange;
+    const statusChanged =
+        previous.heaterStatus !== heaterStatus ||
+        previous.ledStatus !== ledStatus ||
+        previous.feederStatus !== feederStatus;
+    const lastHistoryAt = aquarium.data.deviceMonitor?.lastHistoryAt?.toDate?.();
+    const historyDue =
+        !lastHistoryAt ||
+        (now.getTime() - lastHistoryAt.getTime()) / 1000 >= HISTORY_INTERVAL_SECONDS - HISTORY_SLACK_SECONDS;
+    const saveHistory = !sensorFault && (statusChanged || crossedLimit || historyDue);
+
     const batch = db.batch();
     batch.update(aquarium.reference, {
         // Sensor gagal: suhu dikosongkan agar dashboard tidak menampilkan suhu lama
@@ -98,6 +117,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
         ...(cameBackOnline && { "deviceMonitor.offlineNotified": false }),
         ...(sensorFault && !sensorErrorNotified && { "deviceMonitor.sensorErrorNotified": true }),
         ...(!sensorFault && sensorErrorNotified && { "deviceMonitor.sensorErrorNotified": false }),
+        ...(saveHistory && { "deviceMonitor.lastHistoryAt": FieldValue.serverTimestamp() }),
         ...lightingUsageUpdate(aquarium.data, now),
     });
 
@@ -115,22 +135,21 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
             );
         }
     } else {
-        batch.set(aquarium.reference.collection("telemetry_history").doc(), {
-            userId: null,
-            aquariumId: AQUARIUM_ID,
-            timestamp: FieldValue.serverTimestamp(),
-            temp: currentTemp,
-            heaterState: heaterStatus,
-            ledState: ledStatus,
-            feederState: feederStatus,
-            event: event || "Telemetry update",
-        });
+        if (saveHistory) {
+            batch.set(aquarium.reference.collection("telemetry_history").doc(), {
+                userId: null,
+                aquariumId: AQUARIUM_ID,
+                timestamp: FieldValue.serverTimestamp(),
+                temp: currentTemp,
+                heaterState: heaterStatus,
+                ledState: ledStatus,
+                feederState: feederStatus,
+                event: event || "Telemetry update",
+            });
+        }
 
         // Alert hanya saat suhu baru keluar dari batas, bukan di setiap pembacaan
-        const { minTempThreshold: min, maxTempThreshold: max } = aquarium.data.tempConfig || {};
-        const previousTemp = aquarium.data.realtimeState?.currentTemp;
-        const wasOutOfRange = Number.isFinite(previousTemp) && isOutOfRange(previousTemp, min, max);
-        if (isOutOfRange(currentTemp, min, max) && !wasOutOfRange) {
+        if (crossedLimit) {
             const isLow = currentTemp < min;
             batch.set(
                 notificationsRef().doc(),
@@ -161,7 +180,7 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
 });
 
 router.get("/:aquariumId/config", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId);
+    const aquarium = await findAquariumForDevice(req.params.aquariumId);
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     const { tempConfig, lightingConfig, feederConfig, systemConfig } = aquarium.data;
     return res.json(

@@ -61,7 +61,7 @@ Semua kode ada di satu file, [src/main.cpp](src/main.cpp), dengan bagian berikut
 | Jaringan            | `GET /config`, `POST /telemetry`, siklus di core 0; Wi-Fi dimulai di `setup()` dan tersambung ulang otomatis |
 | `setup()`, `loop()` | Inisialisasi dan menjalankan config                                                                          |
 
-Jaringan berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer di core 1. Urutan siklusnya: **baca config → `loop()` menjalankannya → kirim telemetry**.
+Jaringan berjalan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer di core 1. Urutan siklusnya: **baca config → `loop()` menjalankannya → kirim telemetry**. Config dibaca tiap 3 detik, sedangkan telemetry dikirim tiap `pollFrequency` detik atau segera saat status heater, lampu, atau alarm berubah ([kontraknya](../docs/web/architecture.md#kontrak-dengan-perangkat)).
 
 ## Perilaku
 
@@ -80,8 +80,8 @@ Pengujian tiap modul perangkat ada di [docs/hardware/testing.md](../docs/hardwar
 1. Jalankan backend dan frontend ([README.md](../README.md#menjalankan)), lalu register satu akun agar dokumen akuarium ada.
 2. Upload firmware dan buka Serial Monitor (115200).
 3. Di dashboard, badge di samping judul berubah menjadi **Device online** dan suhu tampil di Overview.
-4. Ubah suhu target atau mode di dashboard. Pada siklus berikutnya, baris `[API] Config: ...` menampilkan nilai baru dan relay mengikuti.
-5. Di Firebase Console, dokumen baru muncul di `telemetry_history` setiap siklus ([docs/web/database.md](../docs/web/database.md#membuka-database)).
+4. Ubah suhu target atau mode di dashboard. Dalam sekitar 3 detik, baris `[API] Config: ...` menampilkan nilai baru dan relay mengikuti.
+5. Di Firebase Console, dokumen baru muncul di `telemetry_history` tiap sekitar 60 detik, atau saat status heater/lampu berubah ([docs/web/database.md](../docs/web/database.md#membuka-database)).
 
 ## Masalah umum
 

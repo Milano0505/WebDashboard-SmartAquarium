@@ -2,10 +2,11 @@
   Firmware ESP32 Smart Aquarium: heater dan lampu, terhubung ke REST API backend.
   Tanpa RTC: jam hanya dari NTP. Pemberi pakan belum ada, jadi feederStatus selalu "Idle".
 
-  Siklus setiap systemConfig.pollFrequency detik (urutan ini wajib, lihat docs/web/architecture.md):
+  Siklus tiap COMMAND_POLL_MS (urutan ini wajib, lihat docs/web/architecture.md):
     1. GET  /api/hardware/{aquariumId}/config     (task jaringan, core 0)
     2. Menjalankan config: heater dan lampu       (loop(), core 1)
-    3. POST /api/hardware/{aquariumId}/telemetry  (task jaringan, core 0)
+    3. POST /api/hardware/{aquariumId}/telemetry  (core 0), hanya jika sudah systemConfig.pollFrequency detik
+       sejak telemetry terakhir, atau status heater/lampu/alarm berubah
 
   Heater dan lampu manual tetap dikontrol walau Wi-Fi atau backend mati, memakai config terakhir (disimpan di flash).
   Jadwal lampu otomatis butuh jam NTP; selama belum sinkron, lampu mati.
@@ -39,6 +40,7 @@ constexpr float HEATER_CUTOFF_C = 36.0;          // Heater dipaksa mati di semua
 constexpr uint32_t TEMP_READ_INTERVAL_MS = 5000;
 constexpr uint32_t TEMP_CONVERSION_MS = 800;     // Waktu konversi DS18B20 (12 bit)
 constexpr uint32_t LAMP_CHECK_INTERVAL_MS = 1000;
+constexpr uint32_t COMMAND_POLL_MS = 3000;       // Seberapa sering config dibaca, agar perintah dashboard cepat berjalan
 constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
 constexpr uint32_t APPLY_TIMEOUT_MS = 4000;      // Batas menunggu loop() menjalankan config sebelum telemetry
 
@@ -97,15 +99,17 @@ DeviceStatus getStatus() {
 }
 
 // Pakai config baru dari backend; flash hanya ditulis saat isinya berubah
-void storeConfig(const RemoteConfig& next) {
+// Hasil true jika isi config berubah
+bool storeConfig(const RemoteConfig& next) {
     bool changed = memcmp(&config, &next, sizeof(next)) != 0; // Aman: struct dibuat dari memset(0)
     locked([&] { config = next; });
     configPending = true;
-    if (!changed) return;
+    if (!changed) return false;
     Preferences prefs;
     prefs.begin("aquarium", false);
     prefs.putBytes("config", &next, sizeof(next));
     prefs.end();
+    return true;
 }
 
 // Pulihkan config terakhir dari flash saat ESP32 menyala
@@ -331,6 +335,8 @@ int request(const char* path, const String& body, String& response) {
     int code = body.length() ? http.POST(body) : http.GET();
     response = code > 0 ? http.getString() : HTTPClient::errorToString(code);
     http.end();
+    // IP ESP32 dan URL yang dituju: untuk membedakan beda subnet/VLAN dari firmware yang belum di-upload ulang
+    if (code <= 0) Serial.printf("[API] %s from %s -> %s\n", path, WiFi.localIP().toString().c_str(), endpoint(path).c_str());
     return code;
 }
 
@@ -380,30 +386,31 @@ bool fetchConfig() {
     next.lampStartMin = parseClockTime(lighting["schedule"]["startTime"] | "");
     next.lampEndMin = parseClockTime(lighting["schedule"]["endTime"] | "");
 
-    next.pollFrequency = constrain((int)(doc["systemConfig"]["pollFrequency"] | 5), 1, 60);
+    next.pollFrequency = constrain((int)(doc["systemConfig"]["pollFrequency"] | 30), 1, 60);
     strlcpy(next.timezone, doc["systemConfig"]["timezone"] | "Asia/Jakarta", sizeof(next.timezone));
 
-    storeConfig(next);
+    bool changed = storeConfig(next);
     setTimezone(next.timezone);
 
-    Serial.printf("[API] Config: heater %s/%s target %.1f C, lamp %s/%s schedule %s, poll %us\n",
-                  next.heaterAuto ? "AUTO" : "MANUAL", next.heaterManualOn ? "ON" : "OFF", next.targetTemp,
-                  next.lampAuto ? "AUTO" : "MANUAL", next.lampManualOn ? "ON" : "OFF",
-                  next.lampScheduleOn ? "on" : "off", next.pollFrequency);
+    // Config dibaca tiap COMMAND_POLL_MS, jadi hanya dicatat saat isinya berubah
+    if (changed) {
+        Serial.printf("[API] Config: heater %s/%s target %.1f C, lamp %s/%s schedule %s, poll %us\n",
+                      next.heaterAuto ? "AUTO" : "MANUAL", next.heaterManualOn ? "ON" : "OFF", next.targetTemp,
+                      next.lampAuto ? "AUTO" : "MANUAL", next.lampManualOn ? "ON" : "OFF",
+                      next.lampScheduleOn ? "on" : "off", next.pollFrequency);
+    }
     return true;
 }
 
-// POST /telemetry: kirim suhu dan status nyata heater/lampu ke dashboard
-void sendTelemetry() {
-    DeviceStatus device = getStatus();
-
+// POST /telemetry: kirim suhu dan status nyata heater/lampu ke dashboard. Hasil false = dilewati (belum ada suhu valid)
+bool sendTelemetry(const DeviceStatus& device) {
     // Sensor gagal dengan alasan (event): kirim laporan tanpa currentTemp agar dashboard menampilkan "Sensor Error"
     bool sensorFault = isnan(device.temperature) && device.event[0] != '\0';
 
     // Server menolak suhu di luar -10..60 C, dan tanpa event tidak ada yang bisa dilaporkan
     if (!sensorFault && (isnan(device.temperature) || device.temperature < -10 || device.temperature > 60)) {
         Serial.println("[API] Telemetry skipped: no valid temperature reading.");
-        return;
+        return false;
     }
 
     JsonDocument doc;
@@ -418,11 +425,17 @@ void sendTelemetry() {
     int code = request("/telemetry", body, response);
     if (code != 201) Serial.printf("[API] Send telemetry failed (HTTP %d): %s\n", code, response.c_str());
     else Serial.printf("[API] Telemetry sent: %s\n", body.c_str());
+    return true;
 }
 
-// Urutan wajib: baca config -> loop() menjalankannya -> kirim telemetry.
+// Dua ritme: config dibaca tiap COMMAND_POLL_MS agar perintah dashboard cepat berjalan. Telemetry dikirim tiap
+// pollFrequency (diatur dari dashboard: Configuration -> System -> Poll frequency), atau segera saat status
+// heater/lampu atau alarm berubah supaya hasil perintah cepat terlihat.
+// Urutan wajib tetap: baca config -> loop() menjalankannya -> kirim telemetry.
 // Dashboard menganggap Feed Now selesai saat telemetry pertama setelah perintah diterima
 void networkTask(void*) {
+    DeviceStatus reported = {NAN, false, false, ""}; // Status pada telemetry terakhir yang dikirim
+    uint32_t nextTelemetryAt = 0;
     for (;;) {
         // shortcut: Wi-Fi memakai auto-reconnect bawaan ESP32; tambahkan WiFi.reconnect() jika di lapangan sering tidak tersambung lagi
         if (WiFi.status() == WL_CONNECTED) {
@@ -430,12 +443,19 @@ void networkTask(void*) {
                 uint32_t startedAt = millis();
                 while (configPending && millis() - startedAt < APPLY_TIMEOUT_MS) vTaskDelay(pdMS_TO_TICKS(50));
             }
-            sendTelemetry();
+
+            DeviceStatus device = getStatus();
+            bool changed = device.heaterOn != reported.heaterOn || device.lampOn != reported.lampOn ||
+                           strcmp(device.event, reported.event) != 0;
+            bool due = (int32_t)(millis() - nextTelemetryAt) >= 0;
+            if ((changed || due) && sendTelemetry(device)) {
+                reported = device;
+                nextTelemetryAt = millis() + getConfig().pollFrequency * 1000UL;
+            }
         } else {
             Serial.println("[WIFI] Not connected, waiting for auto-reconnect.");
         }
-        // Interval diatur dari dashboard (Configuration -> System -> Poll frequency)
-        vTaskDelay(pdMS_TO_TICKS(getConfig().pollFrequency * 1000UL));
+        vTaskDelay(pdMS_TO_TICKS(COMMAND_POLL_MS));
     }
 }
 
