@@ -2,11 +2,17 @@
   Firmware ESP32 Smart Aquarium: heater dan lampu, terhubung ke REST API backend.
   Tanpa RTC: jam hanya dari NTP. Pemberi pakan belum ada, jadi feederStatus selalu "Idle".
 
-  Siklus tiap COMMAND_POLL_MS (urutan ini wajib, lihat docs/web/architecture.md):
-    1. GET  /api/hardware/{aquariumId}/config     (task jaringan, core 0)
-    2. Menjalankan config: heater dan lampu       (loop(), core 1)
-    3. POST /api/hardware/{aquariumId}/telemetry  (core 0), hanya jika sudah systemConfig.pollFrequency detik
-       sejak telemetry terakhir, atau status heater/lampu/alarm berubah
+  Dua task jaringan di core 0 dan satu loop() di core 1:
+    - configTask: GET /api/hardware/{aquariumId}/config dengan long polling. Backend menahan permintaan sampai
+      config di dashboard berubah (atau CONFIG_WAIT_S detik), jadi perubahan langsung "didorong" ke perangkat
+    - loop() (core 1): menjalankan config baru ke heater dan lampu
+    - networkTask: POST /api/hardware/{aquariumId}/telemetry, hanya jika sudah systemConfig.pollFrequency detik
+      sejak telemetry terakhir, atau status heater/lampu/alarm berubah. Tidak dikirim selagi config baru
+      belum dijalankan. Setiap pembacaan membawa waktu pengukuran dari NTP (measuredAt). Pembacaan yang gagal
+      terkirim (Wi-Fi atau backend mati) disimpan di antrean RAM dan dikirim ulang lewat /telemetry/backlog
+
+  Watchdog: loop() (heater, lampu, alarm) didaftarkan ke Task Watchdog Timer. Jika loop() macet, ESP32 restart
+  dan relay mati lagi saat boot. Task jaringan yang macet lama juga memicu restart (lihat checkNetworkTasks).
 
   Heater dan lampu manual tetap dikontrol walau Wi-Fi atau backend mati, memakai config terakhir (disimpan di flash).
   Jadwal lampu otomatis butuh jam NTP; selama belum sinkron, lampu mati.
@@ -16,6 +22,8 @@
 #include <ArduinoJson.h>
 #include <DallasTemperature.h>
 #include <HTTPClient.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <OneWire.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -40,8 +48,18 @@ constexpr float HEATER_CUTOFF_C = 36.0;          // Heater dipaksa mati di semua
 constexpr uint32_t TEMP_READ_INTERVAL_MS = 5000;
 constexpr uint32_t TEMP_CONVERSION_MS = 800;     // Waktu konversi DS18B20 (12 bit)
 constexpr uint32_t LAMP_CHECK_INTERVAL_MS = 1000;
-constexpr uint32_t COMMAND_POLL_MS = 3000;       // Seberapa sering config dibaca, agar perintah dashboard cepat berjalan
+constexpr uint32_t COMMAND_POLL_MS = 3000;       // Jeda sebelum GET /config diulang jika gagal atau dibalas langsung
+constexpr uint32_t TELEMETRY_CHECK_MS = 500;     // Seberapa sering status lokal dicek untuk dikirim (tanpa jaringan)
+constexpr uint32_t TELEMETRY_RETRY_MS = 3000;    // Jeda sebelum telemetry yang belum terkirim dicoba lagi
+constexpr size_t BACKLOG_CAPACITY = 120;         // Antrean pembacaan offline: sekitar 2 jam pada 1 pembacaan per menit
+constexpr uint32_t BACKLOG_MIN_GAP_S = 60;       // Jarak minimal antar pembacaan antrean, kecuali status berubah
+constexpr size_t BACKLOG_CHUNK = 20;             // Jumlah pembacaan per permintaan /telemetry/backlog
+constexpr uint32_t CONFIG_WAIT_S = 20;           // Lama backend boleh menahan GET /config (maks. 25 di backend)
+constexpr uint32_t CONFIG_TIMEOUT_MS = (CONFIG_WAIT_S + 5) * 1000; // Harus lebih lama dari CONFIG_WAIT_S
 constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
+constexpr uint32_t NETWORK_STALL_MS = 120000;   // Task jaringan tanpa tanda hidup selama ini dianggap macet. Harus jauh di
+                                                 // atas satu putaran terpanjang (long polling CONFIG_TIMEOUT_MS + jeda)
+constexpr uint32_t BOOT_REPORT_NO_NTP_MS = 60000; // Laporan restart dikirim tanpa bootedAt jika NTP belum sinkron selama ini
 constexpr uint32_t APPLY_TIMEOUT_MS = 4000;      // Batas menunggu loop() menjalankan config sebelum telemetry
 
 // ============================================================
@@ -74,6 +92,20 @@ struct DeviceStatus {
 
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool configPending = false; // true = loop() harus menjalankan config baru dulu
+
+// Tanda hidup task jaringan (millis() terakhir tiap putaran). Diperiksa loop() untuk mendeteksi task yang macet
+static volatile uint32_t networkBeatAt = 0;
+static volatile uint32_t configBeatAt = 0;
+
+// Restart abnormal yang belum dilaporkan ke backend (teksnya harus sama dengan daftar di backend/routes/hardware.js).
+// bootReason nullptr = menyala normal. Dikirim satu kali pada telemetry pertama yang berhasil
+static const char* bootReason = nullptr;
+static volatile bool bootReportPending = false;
+static uint32_t bootedAt = 0; // Waktu menyala (detik sejak 1970), dihitung sekali setelah NTP sinkron; dipakai backend agar laporan tidak ganda
+
+// Isi RTC tidak hilang saat restart software. Diisi sebelum restart karena task macet agar bisa dibedakan dari restart biasa
+constexpr uint32_t STALL_RESTART_MAGIC = 0xA5C3A5C3;
+static RTC_NOINIT_ATTR uint32_t stallRestartMagic;
 
 // Sebelum config dari backend diterima semua aktuator mati
 static RemoteConfig config = {false, false, 24.0, 20.0, 30.0, false, false, false, -1, -1, 5, "Asia/Jakarta"};
@@ -217,6 +249,12 @@ int minuteOfDay() {
     return local.tm_hour * 60 + local.tm_min;
 }
 
+// Detik sejak 1970 (UTC) dari NTP, 0 jika belum sinkron (waktu sistem belum lewat 2023)
+uint32_t epochNow() {
+    time_t now = time(nullptr);
+    return now < 1700000000 ? 0 : (uint32_t)now;
+}
+
 // ============================================================
 // Heater (sensor suhu + relay)
 // ============================================================
@@ -326,9 +364,9 @@ String endpoint(const char* path) {
 }
 
 // Kirim request ke backend. body kosong = GET, selain itu POST JSON. Hasil: kode HTTP, isi respons di response
-int request(const char* path, const String& body, String& response) {
+int request(const char* path, const String& body, String& response, uint32_t timeoutMs = HTTP_TIMEOUT_MS) {
     HTTPClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(timeoutMs);
     http.begin(endpoint(path));
     http.addHeader("x-device-key", DEVICE_KEY);
     if (body.length()) http.addHeader("Content-Type", "application/json");
@@ -352,10 +390,18 @@ int parseClockTime(const char* text) {
     return (hour % 12 + (letter == 'P' ? 12 : 0)) * 60 + minute;
 }
 
-// GET /config: ambil pengaturan dashboard. Jika gagal, config lama tetap dipakai
+// Versi config terakhir yang diterima (field configVersion di respons). Hanya dipakai configTask.
+// Kosong = belum pernah menerima, jadi GET pertama dibalas langsung tanpa ditahan
+static String configVersion;
+
+// GET /config: ambil pengaturan dashboard. Jika sudah punya versi, backend menahan permintaan sampai config
+// berubah (long polling). Jika gagal, config lama tetap dipakai
 bool fetchConfig() {
+    String path = "/config";
+    if (configVersion.length()) path += "?wait=" + String(CONFIG_WAIT_S) + "&v=" + configVersion;
+
     String body;
-    int code = request("/config", "", body);
+    int code = request(path.c_str(), "", body, CONFIG_TIMEOUT_MS);
     if (code != 200) {
         Serial.printf("[API] Read config failed (HTTP %d): %s\n", code, body.c_str());
         return false;
@@ -367,6 +413,8 @@ bool fetchConfig() {
         Serial.printf("[API] Config JSON is invalid: %s\n", error.c_str());
         return false;
     }
+
+    configVersion = (const char*)(doc["configVersion"] | "");
 
     // memset agar byte kosong selalu 0 (dipakai memcmp). Nilai setelah `|` dipakai jika field null/tidak ada
     RemoteConfig next;
@@ -392,7 +440,7 @@ bool fetchConfig() {
     bool changed = storeConfig(next);
     setTimezone(next.timezone);
 
-    // Config dibaca tiap COMMAND_POLL_MS, jadi hanya dicatat saat isinya berubah
+    // Respons datang berkali-kali (tiap config berubah atau CONFIG_WAIT_S habis), jadi hanya dicatat saat isinya berubah
     if (changed) {
         Serial.printf("[API] Config: heater %s/%s target %.1f C, lamp %s/%s schedule %s, poll %us\n",
                       next.heaterAuto ? "AUTO" : "MANUAL", next.heaterManualOn ? "ON" : "OFF", next.targetTemp,
@@ -402,8 +450,9 @@ bool fetchConfig() {
     return true;
 }
 
-// POST /telemetry: kirim suhu dan status nyata heater/lampu ke dashboard. Hasil false = dilewati (belum ada suhu valid)
-bool sendTelemetry(const DeviceStatus& device) {
+// POST /telemetry: kirim suhu dan status nyata heater/lampu ke dashboard.
+// Hasil false = belum terkirim (belum ada suhu valid, tidak bisa tersambung, atau backend error) dan perlu dicoba lagi
+bool sendTelemetry(const DeviceStatus& device, uint32_t measuredAt) {
     // Sensor gagal dengan alasan (event): kirim laporan tanpa currentTemp agar dashboard menampilkan "Sensor Error"
     bool sensorFault = isnan(device.temperature) && device.event[0] != '\0';
 
@@ -414,6 +463,14 @@ bool sendTelemetry(const DeviceStatus& device) {
     }
 
     JsonDocument doc;
+    if (measuredAt) doc["measuredAt"] = measuredAt; // Tanpa NTP dihilangkan; backend memakai waktu terima
+
+    // Laporan restart abnormal ikut pada telemetry sampai backend menerimanya (201)
+    bool includesBootReport = bootReportPending && (bootedAt != 0 || millis() > BOOT_REPORT_NO_NTP_MS);
+    if (includesBootReport) {
+        doc["bootReason"] = bootReason;
+        if (bootedAt) doc["bootedAt"] = bootedAt;
+    }
     if (!sensorFault) doc["currentTemp"] = device.temperature;
     doc["heaterStatus"] = device.heaterOn ? "ON" : "OFF";
     doc["ledStatus"] = device.lampOn ? "ON" : "OFF";
@@ -425,38 +482,206 @@ bool sendTelemetry(const DeviceStatus& device) {
     int code = request("/telemetry", body, response);
     if (code != 201) Serial.printf("[API] Send telemetry failed (HTTP %d): %s\n", code, response.c_str());
     else Serial.printf("[API] Telemetry sent: %s\n", body.c_str());
+    if (code == 201 && includesBootReport) bootReportPending = false;
+    // Gagal tersambung (code <= 0) atau backend error (5xx): false agar dicoba lagi. Penolakan 4xx (mis. kunci salah)
+    // tidak akan berhasil dengan mengulang, jadi dianggap selesai dan menunggu jadwal berikutnya
+    return code > 0 && code < 500;
+}
+
+// ---------- Antrean pembacaan yang belum terkirim ----------
+
+// Satu pembacaan yang menunggu dikirim ulang
+struct Reading {
+    uint32_t measuredAt; // Detik sejak 1970 (UTC)
+    float temperature;
+    bool heaterOn;
+    bool lampOn;
+    char event[40];
+};
+
+// Antrean melingkar di RAM, hanya dipakai networkTask (tanpa lock). Hilang jika ESP32 restart. Penuh = yang terlama dibuang
+static Reading backlog[BACKLOG_CAPACITY];
+static size_t backlogHead = 0;  // Indeks pembacaan tertua
+static size_t backlogCount = 0;
+
+bool hasValidTemperature(const DeviceStatus& device) {
+    return !isnan(device.temperature) && device.temperature >= -10 && device.temperature <= 60;
+}
+
+// Simpan pembacaan yang gagal terkirim. Tanpa jam NTP waktunya tidak bisa dicatat, jadi dilewati. Pembacaan
+// dengan status yang sama dijarangkan (1 per BACKLOG_MIN_GAP_S) karena pengiriman gagal diulang tiap beberapa detik
+void bufferReading(const DeviceStatus& device, uint32_t measuredAt) {
+    if (measuredAt == 0 || !hasValidTemperature(device)) return;
+
+    if (backlogCount > 0) {
+        const Reading& last = backlog[(backlogHead + backlogCount - 1) % BACKLOG_CAPACITY];
+        bool sameStatus = last.heaterOn == device.heaterOn && last.lampOn == device.lampOn &&
+                          strcmp(last.event, device.event) == 0;
+        if (sameStatus && measuredAt - last.measuredAt < BACKLOG_MIN_GAP_S) return;
+    }
+    if (backlogCount == BACKLOG_CAPACITY) {
+        backlogHead = (backlogHead + 1) % BACKLOG_CAPACITY;
+        backlogCount--;
+    }
+
+    Reading& slot = backlog[(backlogHead + backlogCount) % BACKLOG_CAPACITY];
+    slot.measuredAt = measuredAt;
+    slot.temperature = device.temperature;
+    slot.heaterOn = device.heaterOn;
+    slot.lampOn = device.lampOn;
+    strlcpy(slot.event, device.event, sizeof(slot.event));
+    backlogCount++;
+}
+
+// POST /telemetry/backlog: kirim pembacaan lama, paling tua dulu, BACKLOG_CHUNK per permintaan.
+// 201 = paket dihapus dari antrean. 400 = backend menolak bentuk datanya, paket dibuang agar antrean tidak macet.
+// Selain itu (tidak tersambung, 5xx, kunci salah) antrean dipertahankan dan hasilnya false
+bool sendBacklog() {
+    size_t count = backlogCount < BACKLOG_CHUNK ? backlogCount : BACKLOG_CHUNK;
+
+    JsonDocument doc;
+    JsonArray readings = doc["readings"].to<JsonArray>();
+    for (size_t i = 0; i < count; i++) {
+        const Reading& reading = backlog[(backlogHead + i) % BACKLOG_CAPACITY];
+        JsonObject item = readings.add<JsonObject>();
+        item["measuredAt"] = reading.measuredAt;
+        item["currentTemp"] = reading.temperature;
+        item["heaterStatus"] = reading.heaterOn ? "ON" : "OFF";
+        item["ledStatus"] = reading.lampOn ? "ON" : "OFF";
+        item["feederStatus"] = "Idle";
+        if (reading.event[0] != '\0') item["event"] = reading.event;
+    }
+
+    String body, response;
+    serializeJson(doc, body);
+    int code = request("/telemetry/backlog", body, response);
+    if (code != 201 && code != 400) {
+        Serial.printf("[API] Send backlog failed (HTTP %d): %s\n", code, response.c_str());
+        return false;
+    }
+
+    if (code == 400) Serial.printf("[API] Backlog rejected, %u readings dropped: %s\n", (unsigned)count, response.c_str());
+    else Serial.printf("[API] Backlog sent: %u readings, %u left\n", (unsigned)count, (unsigned)(backlogCount - count));
+    backlogHead = (backlogHead + count) % BACKLOG_CAPACITY;
+    backlogCount -= count;
     return true;
 }
 
-// Dua ritme: config dibaca tiap COMMAND_POLL_MS agar perintah dashboard cepat berjalan. Telemetry dikirim tiap
-// pollFrequency (diatur dari dashboard: Configuration -> System -> Poll frequency), atau segera saat status
-// heater/lampu atau alarm berubah supaya hasil perintah cepat terlihat.
-// Urutan wajib tetap: baca config -> loop() menjalankannya -> kirim telemetry.
+// Config: GET /config ditahan backend sampai dashboard mengubah sesuatu (long polling), lalu langsung diterapkan.
+// Task terpisah dari telemetry agar permintaan yang ditahan tidak menunda pengiriman telemetry
+void configTask(void*) {
+    for (;;) {
+        configBeatAt = millis();
+        uint32_t startedAt = millis();
+        bool ok = false;
+        if (WiFi.status() == WL_CONNECTED) {
+            ok = fetchConfig();
+            if (ok) {
+                // loop() menjalankan config baru; telemetry berikutnya sudah mencerminkan hasilnya
+                uint32_t applyStartedAt = millis();
+                while (configPending && millis() - applyStartedAt < APPLY_TIMEOUT_MS) vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
+        // Gagal, atau dibalas langsung (pertama kali, versi basi, atau backend lama yang tidak menahan permintaan):
+        // beri jeda agar tidak memanggil backend tanpa henti
+        if (!ok || millis() - startedAt < 1000) vTaskDelay(pdMS_TO_TICKS(COMMAND_POLL_MS));
+    }
+}
+
+// Telemetry dikirim tiap pollFrequency (diatur dari dashboard: Configuration -> System -> Poll frequency), atau
+// segera saat status heater/lampu atau alarm berubah supaya hasil perintah cepat terlihat.
+// Tidak dikirim selagi config baru belum dijalankan loop() (urutan: terima config -> jalankan -> laporkan).
 // Dashboard menganggap Feed Now selesai saat telemetry pertama setelah perintah diterima
 void networkTask(void*) {
     DeviceStatus reported = {NAN, false, false, ""}; // Status pada telemetry terakhir yang dikirim
     uint32_t nextTelemetryAt = 0;
+    uint32_t nextAttemptAt = 0; // Jeda coba ulang setelah gagal, agar backend yang mati tidak dihujani permintaan
+    bool online = false;        // true setelah pengiriman terakhir berhasil; antrean lama hanya dikirim saat online
     for (;;) {
         // shortcut: Wi-Fi memakai auto-reconnect bawaan ESP32; tambahkan WiFi.reconnect() jika di lapangan sering tidak tersambung lagi
-        if (WiFi.status() == WL_CONNECTED) {
-            if (fetchConfig()) {
-                uint32_t startedAt = millis();
-                while (configPending && millis() - startedAt < APPLY_TIMEOUT_MS) vTaskDelay(pdMS_TO_TICKS(50));
-            }
+        networkBeatAt = millis();
+        if (bootReportPending && bootedAt == 0) {
+            uint32_t epoch = epochNow();
+            if (epoch) bootedAt = epoch - millis() / 1000; // Ditetapkan sekali, sama untuk semua percobaan kirim
+        }
+        bool connected = WiFi.status() == WL_CONNECTED;
+        bool retryWait = (int32_t)(millis() - nextAttemptAt) < 0;
 
+        if (!configPending && !retryWait) {
             DeviceStatus device = getStatus();
             bool changed = device.heaterOn != reported.heaterOn || device.lampOn != reported.lampOn ||
                            strcmp(device.event, reported.event) != 0;
             bool due = (int32_t)(millis() - nextTelemetryAt) >= 0;
-            if ((changed || due) && sendTelemetry(device)) {
-                reported = device;
-                nextTelemetryAt = millis() + getConfig().pollFrequency * 1000UL;
+
+            if (changed || due) {
+                // Waktu pengukuran ditetapkan sekali agar pembacaan yang diantrekan dan dikirim ulang punya cap waktu sama
+                uint32_t measuredAt = epochNow();
+                if (connected && sendTelemetry(device, measuredAt)) {
+                    reported = device;
+                    nextTelemetryAt = millis() + getConfig().pollFrequency * 1000UL;
+                    online = true;
+                } else {
+                    if (!connected) Serial.println("[WIFI] Not connected, waiting for auto-reconnect.");
+                    bufferReading(device, measuredAt);
+                    online = false;
+                    nextAttemptAt = millis() + TELEMETRY_RETRY_MS;
+                }
+            } else if (online && connected && backlogCount > 0) {
+                // Kirim antrean satu paket per siklus, setelah telemetry terbaru sudah sampai
+                if (!sendBacklog()) {
+                    online = false;
+                    nextAttemptAt = millis() + TELEMETRY_RETRY_MS;
+                }
             }
-        } else {
-            Serial.println("[WIFI] Not connected, waiting for auto-reconnect.");
         }
-        vTaskDelay(pdMS_TO_TICKS(COMMAND_POLL_MS));
+        vTaskDelay(pdMS_TO_TICKS(TELEMETRY_CHECK_MS));
     }
+}
+
+// ============================================================
+// Watchdog
+// ============================================================
+
+// Penyebab restart terakhir, agar restart oleh watchdog terlihat di serial monitor
+const char* resetReasonName(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON: return "power on";
+        case ESP_RST_SW: return "software restart";
+        case ESP_RST_PANIC: return "crash (panic)";
+        case ESP_RST_INT_WDT: return "interrupt watchdog";
+        case ESP_RST_TASK_WDT: return "task watchdog";
+        case ESP_RST_WDT: return "other watchdog";
+        case ESP_RST_BROWNOUT: return "brownout (power dip)";
+        default: return "other";
+    }
+}
+
+// Alasan restart yang perlu dilaporkan ke dashboard, nullptr jika restart biasa (power on atau sengaja)
+const char* abnormalBootReason(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_INT_WDT: return "interrupt watchdog";
+        case ESP_RST_TASK_WDT: return "task watchdog";
+        case ESP_RST_WDT: return "other watchdog";
+        case ESP_RST_PANIC: return "crash (panic)";
+        case ESP_RST_BROWNOUT: return "brownout (power dip)";
+        case ESP_RST_SW: return stallRestartMagic == STALL_RESTART_MAGIC ? "network task stalled" : nullptr;
+        default: return nullptr;
+    }
+}
+
+// Task jaringan yang macet (Wi-Fi atau HTTP tersangkut) tidak mengganggu heater karena kontrolnya di loop(),
+// tetapi dashboard jadi buta dan perintah tidak sampai. Restart aman: relay dimatikan saat boot dan config
+// terakhir dipulihkan dari flash. Relay dimatikan dulu supaya tidak menyala selama proses restart
+void checkNetworkTasks() {
+    uint32_t now = millis();
+    if (now - networkBeatAt <= NETWORK_STALL_MS && now - configBeatAt <= NETWORK_STALL_MS) return;
+
+    Serial.println("[WDT] Network task stalled, restarting.");
+    Serial.flush();
+    stallRestartMagic = STALL_RESTART_MAGIC;
+    digitalWrite(PIN_RELAY_HEATER, RELAY_OFF);
+    digitalWrite(PIN_RELAY_LAMP, RELAY_OFF);
+    ESP.restart();
 }
 
 // ============================================================
@@ -465,6 +690,11 @@ void networkTask(void*) {
 
 void setup() {
     Serial.begin(115200);
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    bootReason = abnormalBootReason(resetReason);
+    bootReportPending = bootReason != nullptr;
+    stallRestartMagic = 0; // Sudah dibaca; dipakai sekali
+    Serial.printf("[BOOT] Last reset: %s\n", bootReason ? bootReason : resetReasonName(resetReason));
 
     // Relay dan buzzer lebih dulu agar keluaran pasti mati saat menyala
     initRelay(PIN_RELAY_HEATER);
@@ -484,11 +714,22 @@ void setup() {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     // Task jaringan di core 0 agar Wi-Fi/HTTP yang lambat tidak menahan kontrol heater dan buzzer
+    networkBeatAt = configBeatAt = millis(); // Dasar penghitungan macet; dipasang sebelum kedua task berjalan
     xTaskCreatePinnedToCore(networkTask, "network", 12288, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(configTask, "config", 12288, nullptr, 1, nullptr, 0);
+
+    // Task watchdog (timeout bawaan 5 detik): loop() otomatis melapor tiap putaran. Jika macet, ESP32 restart.
+    // Dipasang paling akhir agar setup() yang lama tidak memicunya
+    enableLoopWDT();
+    // Konfirmasi di serial: tanpa ini kegagalan mendaftarkan watchdog tidak terlihat sama sekali
+    Serial.printf("[WDT] Loop watchdog %s
+", esp_task_wdt_status(nullptr) == ESP_OK ? "enabled" : "NOT ENABLED");
     Serial.println("=== SMART AQUARIUM READY (tanpa RTC) ===");
 }
 
 void loop() {
+    checkNetworkTasks();
+
     // Config baru langsung dijalankan, lalu task jaringan boleh mengirim telemetry
     if (configPending) {
         applyHeater();

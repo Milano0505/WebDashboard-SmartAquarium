@@ -12,6 +12,7 @@ import {
     recentNotifications,
     sharedNotification,
 } from "../utils/notifications.js";
+import { publishConfigChange } from "../utils/config-events.js";
 import { cachedTelemetry } from "../utils/telemetry-cache.js";
 
 const router = Router();
@@ -137,6 +138,8 @@ function patchConfig(section, successMessage) {
         await batch.commit();
         invalidateAquarium(aquarium.reference.id);
         invalidateNotifications(aquarium.reference.id);
+        // Dorong ke perangkat yang sedang menunggu GET /config
+        publishConfigChange(aquarium.reference.id);
         return res.json({ updatedAt: new Date().toISOString(), message: successMessage });
     };
 }
@@ -265,6 +268,7 @@ router.post("/:aquariumId/feeder/trigger", async (req, res) => {
     await batch.commit();
     invalidateAquarium(aquarium.reference.id);
     invalidateNotifications(aquarium.reference.id);
+    publishConfigChange(aquarium.reference.id);
     return res.json({ status: "triggered", message: "Feed command sent." });
 });
 
