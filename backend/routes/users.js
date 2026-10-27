@@ -2,7 +2,7 @@ import { Router } from "express";
 import { admin, db } from "../config/firebase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { toIsoString } from "../utils/firestore.js";
-import { notificationsRef, privateNotification } from "../utils/notifications.js";
+import { addPrivateNotifications, invalidateNotifications } from "../utils/notifications.js";
 import { isValidProfilePhotoUrl } from "../utils/profile-photo.js";
 
 const router = Router();
@@ -16,13 +16,14 @@ function userProfile(userId, user) {
         userId,
         fullName: user.fullName,
         email: user.email,
+        role: user.role === "admin" ? "admin" : "user",
         photoUrl: user.photoUrl ?? null,
         createdAt: toIsoString(user.createdAt),
         updatedAt: toIsoString(user.updatedAt),
     };
 }
 
-// User hanya boleh mengakses profilnya sendiri
+// User hanya boleh mengakses profilnya sendiri; admin boleh membaca profil siapa pun
 function isOwnProfile(req) {
     return req.params.userId === req.auth.userId;
 }
@@ -30,8 +31,10 @@ function isOwnProfile(req) {
 // ---------- Route ----------
 
 router.get("/:userId", async (req, res) => {
-    if (!isOwnProfile(req)) return res.status(403).json({ message: "You cannot access this user profile." });
-    const userDoc = await db.collection("users").doc(req.auth.userId).get();
+    if (!isOwnProfile(req) && req.auth.role !== "admin") {
+        return res.status(403).json({ message: "You cannot access this user profile." });
+    }
+    const userDoc = await db.collection("users").doc(req.params.userId).get();
     if (!userDoc.exists) return res.status(404).json({ message: "User profile was not found." });
     return res.json(userProfile(userDoc.id, userDoc.data()));
 });
@@ -68,11 +71,14 @@ router.put("/:userId", async (req, res) => {
 
     const batch = db.batch();
     batch.update(userRef, { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-    batch.create(
-        notificationsRef().doc(),
-        privateNotification(req.auth.userId, "Profile updated", "Your profile information was updated."),
+    const notified = await addPrivateNotifications(
+        batch,
+        req.auth.userId,
+        "Profile updated",
+        "Your profile information was updated.",
     );
     await batch.commit();
+    notified.forEach(invalidateNotifications);
     return res.json({ updatedAt: new Date().toISOString(), message: "Profile updated successfully." });
 });
 

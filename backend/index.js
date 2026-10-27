@@ -1,6 +1,7 @@
 import cors from "cors";
 import "dotenv/config";
 import express from "express";
+import adminRoutes from "./routes/admin.js";
 import aquariumRoutes from "./routes/aquariums.js";
 import authRoutes from "./routes/auth.js";
 import hardwareRoutes from "./routes/hardware.js";
@@ -38,6 +39,7 @@ app.use((req, res, next) => {
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api/aquariums", aquariumRoutes);
 app.use("/api/hardware", hardwareRoutes);
 

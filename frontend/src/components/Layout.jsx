@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { initialsOf } from "../utils/format";
-import { Bell, ChevronLeft, ChevronRight, Dashboard, Fish, History, Logout, Settings } from "./Icons";
+import { Bell, ChevronLeft, ChevronRight, Dashboard, Fish, History, Logout, Settings, User } from "./Icons";
 
 const NAV = [
     { path: "/dashboard", label: "Dashboard", icon: Dashboard },
@@ -10,6 +10,7 @@ const NAV = [
     { path: "/notifications", label: "Alerts", icon: Bell },
     { path: "/configuration", label: "Config", icon: Settings },
 ];
+const ACCESS_NAV = { path: "/access", label: "Access", icon: User };
 const NAVY = "#0d1b4b";
 
 function UnreadBadge({ count }) {
@@ -23,14 +24,17 @@ function UnreadBadge({ count }) {
 
 // Kerangka aplikasi: sidebar, header, navigasi bawah (mobile), dan toast
 export default function Layout({ children, notifCount = 0, systemNotice, onDismissSystemNotice }) {
-    const { user, signOut } = useAuth();
+    const { user, signOut, aquariums, activeAquariumId, activeRole, selectAquarium, isAdmin, canManageAccess } =
+        useAuth();
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [collapsed, setCollapsed] = useState(false);
 
     const displayName = user?.fullName || "Aquarist";
+    // Menu Access hanya untuk owner dan admin
+    const navItems = isAdmin || canManageAccess ? [...NAV, ACCESS_NAV] : NAV;
     const isActive = path => pathname === path || pathname.startsWith(`${path}/`);
-    const pageLabel = NAV.find(item => isActive(item.path))?.label || "Dashboard";
+    const pageLabel = navItems.find(item => isActive(item.path))?.label || "Dashboard";
 
     const handleSignOut = async () => {
         try {
@@ -52,7 +56,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
             >
                 <div className="flex-shrink-0 h-16" />
                 <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-                    {NAV.map(({ path, label, icon: Icon }) => (
+                    {navItems.map(({ path, label, icon: Icon }) => (
                         <button
                             key={path}
                             onClick={() => navigate(path)}
@@ -130,30 +134,59 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                         </div>
                     </div>
 
-                    <button
-                        onClick={() => navigate("/configuration")}
-                        className="flex items-center gap-2.5 flex-shrink-0"
-                    >
-                        {user?.photoUrl ? (
-                            <img
-                                src={user.photoUrl}
-                                alt={displayName}
-                                className="w-8 h-8 rounded-full object-cover border-2 border-blue-400"
-                            />
-                        ) : (
-                            <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold border-2 border-blue-400">
-                                {initialsOf(user?.fullName, "SA")}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        {aquariums.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                {aquariums.length > 1 ? (
+                                    <select
+                                        value={activeAquariumId || ""}
+                                        onChange={event => selectAquarium(event.target.value)}
+                                        aria-label="Select aquarium"
+                                        className="max-w-[140px] rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-xs font-semibold text-white outline-none"
+                                    >
+                                        {aquariums.map(item => (
+                                            <option key={item.id} value={item.id} className="text-slate-800">
+                                                {item.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <span className="hidden max-w-[140px] truncate text-xs font-semibold text-white/80 md:inline">
+                                        {aquariums[0].name}
+                                    </span>
+                                )}
+                                {activeRole && (
+                                    <span className="rounded-full bg-blue-500/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-100">
+                                        {activeRole}
+                                    </span>
+                                )}
                             </div>
                         )}
-                        <div className="hidden md:block text-left min-w-0">
-                            <div className="text-white text-sm font-semibold leading-none truncate max-w-[140px]">
-                                {displayName}
+                        <button
+                            onClick={() => navigate("/configuration")}
+                            className="flex items-center gap-2.5 flex-shrink-0"
+                        >
+                            {user?.photoUrl ? (
+                                <img
+                                    src={user.photoUrl}
+                                    alt={displayName}
+                                    className="w-8 h-8 rounded-full object-cover border-2 border-blue-400"
+                                />
+                            ) : (
+                                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold border-2 border-blue-400">
+                                    {initialsOf(user?.fullName, "SA")}
+                                </div>
+                            )}
+                            <div className="hidden md:block text-left min-w-0">
+                                <div className="text-white text-sm font-semibold leading-none truncate max-w-[140px]">
+                                    {displayName}
+                                </div>
+                                <div className="text-blue-300 text-[11px] leading-none mt-0.5 truncate max-w-[140px]">
+                                    {user?.email || ""}
+                                </div>
                             </div>
-                            <div className="text-blue-300 text-[11px] leading-none mt-0.5 truncate max-w-[140px]">
-                                {user?.email || ""}
-                            </div>
-                        </div>
-                    </button>
+                        </button>
+                    </div>
                 </header>
 
                 <main
@@ -195,7 +228,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                     paddingBottom: "env(safe-area-inset-bottom, 0px)",
                 }}
             >
-                {NAV.map(({ path, label, icon: Icon }) => {
+                {navItems.map(({ path, label, icon: Icon }) => {
                     const active = isActive(path);
                     return (
                         <button

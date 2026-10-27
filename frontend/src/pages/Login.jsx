@@ -11,7 +11,7 @@ export default function LoginPage() {
     const [showPw, setShowPw] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
-    const { setUser } = useAuth();
+    const { signIn } = useAuth();
     const navigate = useNavigate();
 
     const handleSubmit = async e => {
@@ -24,7 +24,7 @@ export default function LoginPage() {
         setLoading(true);
         try {
             const { userProfile } = await login(email, password);
-            setUser(userProfile);
+            await signIn(userProfile);
             navigate("/dashboard", { replace: true });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Login failed. Please try again.");

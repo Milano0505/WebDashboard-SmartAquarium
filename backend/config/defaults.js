@@ -1,8 +1,12 @@
-// Data awal akuarium, dibuat saat register/login pertama
+// Data awal akuarium yang dibuat admin. `members` memetakan userId ke "owner" atau "member";
+// `memberIds` salinan kuncinya untuk query array-contains.
 // hardwareInfo dan realtimeState nanti diisi oleh ESP32
-export function createDefaultAquarium(userId) {
+export function createDefaultAquarium({ name, createdBy, ownerId = null }) {
     return {
-        userId,
+        name,
+        createdBy,
+        members: ownerId ? { [ownerId]: "owner" } : {},
+        memberIds: ownerId ? [ownerId] : [],
         hardwareInfo: {
             microcontroller: null,
             tempSensor: null,

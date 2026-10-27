@@ -1,32 +1,40 @@
-// Client REST API. Semua request lewat `request` yang menambahkan JWT dan mengubah error
+// Client REST API. Semua request lewat `request` yang menambahkan Firebase ID token dan mengubah error
 // menjadi Error berisi pesan API dan status HTTP
+import {
+    EmailAuthProvider,
+    createUserWithEmailAndPassword,
+    reauthenticateWithCredential,
+    signInWithEmailAndPassword,
+    signOut,
+    updatePassword,
+} from "firebase/auth";
+import { auth } from "../firebase";
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
-// Harus sama dengan SHARED_AQUARIUM_ID di backend
-export const AQUARIUM_ID = import.meta.env.VITE_AQUARIUM_ID || "aquarium-001";
-
-const TOKEN_KEY = "sa_token";
 
 // ---------- Token sesi ----------
 
-export const getToken = () => {
+// ID token berlaku 1 jam; SDK memperbaruinya otomatis dari refresh token yang disimpan Firebase
+const getToken = () => (auth.currentUser ? auth.currentUser.getIdToken() : Promise.resolve(null));
+
+// Selama login/register berjalan, AuthContext tidak boleh memuat sesi sendiri (menghindari balapan)
+let authBusy = false;
+export const isAuthBusy = () => authBusy;
+
+async function whileBusy(task) {
+    authBusy = true;
     try {
-        return localStorage.getItem(TOKEN_KEY);
-    } catch (error) {
-        console.warn("Unable to read the saved session token.", error);
-        return null;
+        return await task();
+    } finally {
+        authBusy = false;
     }
-};
-
-export const setToken = token => localStorage.setItem(TOKEN_KEY, token);
-
-export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+}
 
 // ---------- Fungsi bantu request ----------
 
 function aquariumPath(aquariumId) {
-    if (aquariumId && aquariumId !== AQUARIUM_ID) throw new Error("This installation is configured for one aquarium.");
-    return `/api/aquariums/${encodeURIComponent(AQUARIUM_ID)}`;
+    if (!aquariumId) throw new Error("No aquarium is selected.");
+    return `/api/aquariums/${encodeURIComponent(aquariumId)}`;
 }
 
 function queryString(parameters) {
@@ -39,7 +47,7 @@ function queryString(parameters) {
 }
 
 async function request(path, options = {}) {
-    const token = getToken();
+    const token = await getToken();
     let response;
     try {
         response = await fetch(`${API_BASE_URL}${path}`, {
@@ -60,15 +68,7 @@ async function request(path, options = {}) {
 
     if (!response.ok) {
         // Sesi tidak valid: logout otomatis (event didengarkan AuthContext)
-        if (response.status === 401) {
-            try {
-                clearToken();
-                localStorage.removeItem("sa_user");
-            } catch {
-                // Storage bisa tidak tersedia; event di bawah tetap mengeluarkan user
-            }
-            window.dispatchEvent(new Event("sa:unauthorized"));
-        }
+        if (response.status === 401) window.dispatchEvent(new Event("sa:unauthorized"));
         const error = new Error(body?.message || response.statusText || "Request failed.");
         error.status = response.status;
         throw error;
@@ -97,24 +97,56 @@ async function getOrFallback(path, fallback) {
 
 // ---------- Autentikasi ----------
 
-export async function login(email, password) {
-    const result = await send("POST", "/api/auth/login", { email, password });
-    setToken(result.token);
-    return result;
+const AUTH_ERRORS = {
+    "auth/invalid-credential": "Invalid email or password.",
+    "auth/wrong-password": "Invalid email or password.",
+    "auth/user-not-found": "Invalid email or password.",
+    "auth/email-already-in-use": "An account with this email already exists.",
+    "auth/weak-password": "Password must be at least 6 characters.",
+    "auth/invalid-email": "Enter a valid email address.",
+    "auth/too-many-requests": "Too many attempts. Please try again later.",
+    "auth/network-request-failed": "Unable to reach Firebase. Check your connection.",
+};
+
+// Ubah error Firebase menjadi pesan yang mudah dibaca
+async function firebaseAction(action) {
+    try {
+        return await action();
+    } catch (error) {
+        throw new Error(AUTH_ERRORS[error.code] || error.message || "Authentication failed.");
+    }
 }
 
-export async function register(data) {
-    const result = await send("POST", "/api/auth/register", data);
-    setToken(result.token);
-    return result;
+// Membuat profil di backend (jika belum ada) dan mengembalikannya
+export const startSession = (payload = {}) => send("POST", "/api/auth/session", payload);
+
+export const login = (email, password) =>
+    whileBusy(async () => {
+        await firebaseAction(() => signInWithEmailAndPassword(auth, email, password));
+        return startSession();
+    });
+
+export const register = ({ fullName, email, password, photoUrl }) =>
+    whileBusy(async () => {
+        await firebaseAction(() => createUserWithEmailAndPassword(auth, email, password));
+        return startSession({ fullName, photoUrl });
+    });
+
+// Firebase meminta login ulang sebelum mengganti password, jadi password lama diverifikasi lebih dulu
+export async function changePassword({ currentPassword, newPassword }) {
+    const user = auth.currentUser;
+    if (!user?.email) throw new Error("You are not signed in.");
+    try {
+        await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword));
+    } catch {
+        throw new Error("Current password is incorrect.");
+    }
+    await firebaseAction(() => updatePassword(user, newPassword));
+    await send("POST", "/api/auth/password-changed");
+    return { message: "Password updated successfully." };
 }
 
-export const changePassword = ({ currentPassword, newPassword }) =>
-    send("POST", "/api/auth/change-password", { currentPassword, newPassword });
-
-export async function logout() {
-    clearToken();
-}
+export const logout = () => signOut(auth);
 
 // ---------- Profil user ----------
 
@@ -124,6 +156,8 @@ export const updateUserProfile = (userId, { fullName, photoUrl }) =>
     send("PUT", `/api/users/${encodeURIComponent(userId)}`, { fullName, photoUrl });
 
 // ---------- Konfigurasi akuarium ----------
+
+export const getAquariums = () => apiFetch("/api/aquariums");
 
 export const getAquarium = aquariumId => getOrFallback(aquariumPath(aquariumId), null);
 
@@ -158,9 +192,8 @@ export async function exportTelemetry(aquariumId, { startDate, endDate, format =
     return { csv: body, filename };
 }
 
-// 12 pembacaan terakhir (terlama dulu) untuk <AreaChart>
-export async function getTemperatureChart(aquariumId) {
-    const { telemetryRecords } = await getTelemetry(aquariumId, { limit: 12 });
+// Data <AreaChart> dari record telemetry (terbaru dulu): hasilnya terlama dulu
+export function toChartData(telemetryRecords) {
     return telemetryRecords
         .filter(record => Number.isFinite(new Date(record.timestamp).getTime()))
         .reverse()
@@ -189,3 +222,29 @@ export const markAllNotificationsRead = aquariumId =>
 
 export const deleteNotification = (aquariumId, notificationId) =>
     send("DELETE", `${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}`);
+
+// ---------- Anggota akuarium (owner dan admin) ----------
+
+export const getMembers = aquariumId => apiFetch(`${aquariumPath(aquariumId)}/members`);
+
+export const saveMember = (aquariumId, { email, role }) =>
+    send("PUT", `${aquariumPath(aquariumId)}/members`, { email, role });
+
+export const removeMember = (aquariumId, userId) =>
+    send("DELETE", `${aquariumPath(aquariumId)}/members/${encodeURIComponent(userId)}`);
+
+// ---------- Admin ----------
+
+export const adminGetUsers = () => apiFetch("/api/admin/users");
+
+export const adminSetUserRole = (userId, role) =>
+    send("PATCH", `/api/admin/users/${encodeURIComponent(userId)}`, { role });
+
+export const adminCreateAquarium = ({ name, ownerEmail }) => send("POST", "/api/admin/aquariums", { name, ownerEmail });
+
+export const adminGetDevices = aquariumId => apiFetch(`/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`);
+
+export const adminCreateDevice = (aquariumId, name) =>
+    send("POST", `/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`, { name });
+
+export const adminRevokeDevice = deviceId => send("DELETE", `/api/admin/devices/${encodeURIComponent(deviceId)}`);

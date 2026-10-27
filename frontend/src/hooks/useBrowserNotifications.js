@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AQUARIUM_ID, getNotifications } from "../api/service";
+import { getNotifications } from "../api/service";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -19,7 +19,7 @@ function savePreference(key, enabled) {
 // Browser notification: satu-satunya kanal alert selain halaman Alerts (tanpa email/SMS).
 // Saat aktif dan dashboard terbuka, notifikasi baru dicek tiap 15 detik.
 // Preferensi on/off disimpan per user di localStorage
-export default function useBrowserNotifications(userId) {
+export default function useBrowserNotifications(userId, aquariumId) {
     const [permission, setPermission] = useState(currentPermission);
     const [enabled, setEnabled] = useState(false);
     const knownIds = useRef(null);
@@ -64,12 +64,12 @@ export default function useBrowserNotifications(userId) {
 
     useEffect(() => {
         knownIds.current = null;
-        if (!enabled || permission !== "granted" || !userId) return undefined;
+        if (!enabled || permission !== "granted" || !userId || !aquariumId) return undefined;
 
         let isActive = true;
         const checkForNotifications = async () => {
             try {
-                const { notificationRecords } = await getNotifications(AQUARIUM_ID, { limit: 100 });
+                const { notificationRecords } = await getNotifications(aquariumId, { limit: 100 });
                 if (!isActive) return;
 
                 // Pengecekan pertama hanya mencatat ID agar notifikasi lama tidak muncul lagi
@@ -101,7 +101,7 @@ export default function useBrowserNotifications(userId) {
             isActive = false;
             window.clearInterval(intervalId);
         };
-    }, [enabled, permission, userId]);
+    }, [enabled, permission, userId, aquariumId]);
 
     return {
         permission,

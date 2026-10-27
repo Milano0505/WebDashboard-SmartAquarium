@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-    AQUARIUM_ID,
     getAquarium,
     getNotifications,
     getTelemetry,
-    getTemperatureChart,
+    toChartData,
     triggerFeeder,
     updateFeederConfig,
     updateLightingConfig,
@@ -765,7 +764,7 @@ function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, savin
 export default function DashboardPage({ onSystemChange }) {
     const { tab = "overview" } = useParams();
     const navigate = useNavigate();
-    const { user } = useAuth();
+    const { user, activeAquariumId: AQUARIUM_ID, canControl } = useAuth();
 
     const [aquarium, setAquarium] = useState(null);
     const [chartData, setChartData] = useState([]);
@@ -786,18 +785,18 @@ export default function DashboardPage({ onSystemChange }) {
 
     // Ambil config, status perangkat, grafik, dan data terbaru sekaligus
     const refresh = useCallback(async () => {
-        const [aquariumData, chart, telemetry, notifications] = await Promise.all([
+        // Satu permintaan telemetry untuk grafik (12) dan daftar terbaru (5)
+        const [aquariumData, telemetry, notifications] = await Promise.all([
             getAquarium(AQUARIUM_ID),
-            getTemperatureChart(AQUARIUM_ID),
-            getTelemetry(AQUARIUM_ID, { limit: 5 }),
+            getTelemetry(AQUARIUM_ID, { limit: 12 }),
             getNotifications(AQUARIUM_ID, { limit: 5 }),
         ]);
         if (!isMounted.current) return;
         setAquarium(aquariumData);
-        setChartData(chart);
+        setChartData(toChartData(telemetry.telemetryRecords));
         setRecentTelemetry(telemetry.telemetryRecords.slice(0, 5));
         setRecentNotifications(notifications.notificationRecords.slice(0, 5));
-    }, []);
+    }, [AQUARIUM_ID]);
 
     useEffect(() => {
         refresh()
@@ -879,6 +878,11 @@ export default function DashboardPage({ onSystemChange }) {
         <div className="px-4 py-5">
             <div className="text-xs text-slate-400 mb-0.5">Welcome, {user?.fullName}</div>
             <ErrorAlert message={actionError} />
+            {!canControl && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    You have view-only access to this aquarium. Ask an owner or admin to change its settings.
+                </div>
+            )}
             <div className="flex items-center justify-between gap-3 mb-4">
                 <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-2xl font-bold text-slate-800">
@@ -916,9 +920,12 @@ export default function DashboardPage({ onSystemChange }) {
                     recentNotifications={recentNotifications}
                 />
             )}
-            {activeTab === "temperature" && <TemperatureTab {...tabProps} />}
-            {activeTab === "lighting" && <LightingTab {...tabProps} />}
-            {activeTab === "feeder" && <FeederTab {...tabProps} onFeedNow={handleFeedNow} />}
+            {/* Member hanya melihat: semua kontrol di bawah dimatikan (backend juga menolak dengan 403) */}
+            <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
+                {activeTab === "temperature" && <TemperatureTab {...tabProps} />}
+                {activeTab === "lighting" && <LightingTab {...tabProps} />}
+                {activeTab === "feeder" && <FeederTab {...tabProps} onFeedNow={handleFeedNow} />}
+            </fieldset>
         </div>
     );
 }
