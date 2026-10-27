@@ -48,7 +48,7 @@ const EMPTY_STATE = {
     lastUpdated: null,
 };
 const DEFAULT_TARGET_TEMP = 24;
-const MIN_REFRESH_SECONDS = 5;
+const REFRESH_SECONDS = 10; // Refresh dashboard; dari cache backend, jadi murah dan tidak mengikuti interval kirim perangkat
 
 // Format jam jadwal "hh:mm AM/PM" sesuai API
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
@@ -804,19 +804,17 @@ export default function DashboardPage({ onSystemChange }) {
             .finally(() => isMounted.current && setLoading(false));
     }, [refresh]);
 
-    // Auto-refresh mengikuti poll interval perangkat (min. 5 detik), dijeda saat tab browser tidak aktif
+    // Auto-refresh tiap REFRESH_SECONDS, dijeda saat tab browser tidak aktif
     const pollFrequency = aquarium?.systemConfig?.pollFrequency;
+    const isLoaded = Boolean(aquarium);
     useEffect(() => {
-        if (!pollFrequency) return undefined;
-        const intervalId = window.setInterval(
-            () => {
-                if (document.visibilityState !== "visible") return;
-                refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
-            },
-            Math.max(MIN_REFRESH_SECONDS, pollFrequency) * 1000,
-        );
+        if (!isLoaded) return undefined;
+        const intervalId = window.setInterval(() => {
+            if (document.visibilityState !== "visible") return;
+            refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
+        }, REFRESH_SECONDS * 1000);
         return () => window.clearInterval(intervalId);
-    }, [pollFrequency, refresh]);
+    }, [isLoaded, refresh]);
 
     // Jalankan aksi API, tampilkan toast, lalu muat ulang data. Mengembalikan true jika berhasil
     const runAction = async (action, successMessage, failureMessage) => {

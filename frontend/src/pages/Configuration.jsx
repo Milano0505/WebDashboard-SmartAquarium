@@ -354,9 +354,15 @@ function SystemTab({ aquarium, updateSection, saving, onSave }) {
             </Card>
 
             <Card className="space-y-4">
-                <p className="text-sm font-bold text-slate-700">Sensor Poll Frequency</p>
+                <div>
+                    <p className="text-sm font-bold text-slate-700">Data Send Interval</p>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                        How often the device sends its latest reading to the dashboard. The temperature sensor itself is
+                        read every 5 seconds, and the heater reacts to it right away.
+                    </p>
+                </div>
                 <RangeSlider
-                    label="Poll frequency"
+                    label="Send interval"
                     valueLabel={`${systemConfig.pollFrequency}s`}
                     value={systemConfig.pollFrequency}
                     min={1}
