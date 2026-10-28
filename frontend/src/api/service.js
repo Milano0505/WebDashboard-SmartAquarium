@@ -1,21 +1,16 @@
-// Client REST API. Semua request lewat `request` yang menambahkan Firebase ID token dan mengubah error
+// Client REST API. Semua request lewat `request` yang menambahkan access token Supabase dan mengubah error
 // menjadi Error berisi pesan API dan status HTTP
-import {
-    EmailAuthProvider,
-    createUserWithEmailAndPassword,
-    reauthenticateWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updatePassword,
-} from "firebase/auth";
-import { auth } from "../firebase";
+import { auth } from "../supabase";
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
 
 // ---------- Token sesi ----------
 
-// ID token berlaku 1 jam; SDK memperbaruinya otomatis dari refresh token yang disimpan Firebase
-const getToken = () => (auth.currentUser ? auth.currentUser.getIdToken() : Promise.resolve(null));
+// Access token berlaku 1 jam; SDK memperbaruinya otomatis dari refresh token yang disimpan di browser
+async function getToken() {
+    const { data } = await auth.getSession();
+    return data.session?.access_token ?? null;
+}
 
 // Selama login/register berjalan, AuthContext tidak boleh memuat sesi sendiri (menghindari balapan)
 let authBusy = false;
@@ -97,24 +92,21 @@ async function getOrFallback(path, fallback) {
 
 // ---------- Autentikasi ----------
 
-const AUTH_ERRORS = {
-    "auth/invalid-credential": "Invalid email or password.",
-    "auth/wrong-password": "Invalid email or password.",
-    "auth/user-not-found": "Invalid email or password.",
-    "auth/email-already-in-use": "An account with this email already exists.",
-    "auth/weak-password": "Password must be at least 6 characters.",
-    "auth/invalid-email": "Enter a valid email address.",
-    "auth/too-many-requests": "Too many attempts. Please try again later.",
-    "auth/network-request-failed": "Unable to reach Firebase. Check your connection.",
-};
+// Pesan Supabase dipetakan berdasarkan isi teksnya (kode error tidak selalu ada)
+const AUTH_ERRORS = [
+    [/invalid login credentials/i, "Invalid email or password."],
+    [/already registered|already been registered/i, "An account with this email already exists."],
+    [/password.*(at least|should be|weak)/i, "Password must be at least 6 characters."],
+    [/valid email|invalid.*email/i, "Enter a valid email address."],
+    [/rate limit|too many/i, "Too many attempts. Please try again later."],
+    [/email not confirmed/i, "Confirm your email first. Check your inbox for the confirmation link."],
+    [/failed to fetch|network/i, "Unable to reach Supabase. Check your connection."],
+];
 
-// Ubah error Firebase menjadi pesan yang mudah dibaca
-async function firebaseAction(action) {
-    try {
-        return await action();
-    } catch (error) {
-        throw new Error(AUTH_ERRORS[error.code] || error.message || "Authentication failed.");
-    }
+// Supabase mengembalikan { error } alih-alih melempar; ubah menjadi Error dengan pesan yang mudah dibaca
+function authFailure(error) {
+    const match = AUTH_ERRORS.find(([pattern]) => pattern.test(error.message || ""));
+    return new Error(match ? match[1] : error.message || "Authentication failed.");
 }
 
 // Membuat profil di backend (jika belum ada) dan mengembalikannya
@@ -122,31 +114,43 @@ export const startSession = (payload = {}) => send("POST", "/api/auth/session", 
 
 export const login = (email, password) =>
     whileBusy(async () => {
-        await firebaseAction(() => signInWithEmailAndPassword(auth, email, password));
+        const { error } = await auth.signInWithPassword({ email, password });
+        if (error) throw authFailure(error);
         return startSession();
     });
 
+// Profil dibuat trigger database dari full_name. Jika proyek mewajibkan konfirmasi email, signUp tidak
+// mengembalikan sesi: hasilnya { needsConfirmation: true } dan user harus mengonfirmasi lewat email dulu
 export const register = ({ fullName, email, password, photoUrl }) =>
     whileBusy(async () => {
-        await firebaseAction(() => createUserWithEmailAndPassword(auth, email, password));
+        const { data, error } = await auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: fullName } },
+        });
+        if (error) throw authFailure(error);
+        if (!data.session) return { userProfile: null, needsConfirmation: true };
         return startSession({ fullName, photoUrl });
     });
 
-// Firebase meminta login ulang sebelum mengganti password, jadi password lama diverifikasi lebih dulu
+// Password lama diverifikasi dengan login ulang sebelum diganti
 export async function changePassword({ currentPassword, newPassword }) {
-    const user = auth.currentUser;
-    if (!user?.email) throw new Error("You are not signed in.");
-    try {
-        await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword));
-    } catch {
-        throw new Error("Current password is incorrect.");
-    }
-    await firebaseAction(() => updatePassword(user, newPassword));
+    const { data } = await auth.getUser();
+    const email = data.user?.email;
+    if (!email) throw new Error("You are not signed in.");
+
+    const { error: verifyError } = await auth.signInWithPassword({ email, password: currentPassword });
+    if (verifyError) throw new Error("Current password is incorrect.");
+
+    const { error } = await auth.updateUser({ password: newPassword });
+    if (error) throw authFailure(error);
     await send("POST", "/api/auth/password-changed");
     return { message: "Password updated successfully." };
 }
 
-export const logout = () => signOut(auth);
+export const logout = async () => {
+    await auth.signOut();
+};
 
 // ---------- Profil user ----------
 
@@ -240,7 +244,8 @@ export const adminGetUsers = () => apiFetch("/api/admin/users");
 export const adminSetUserRole = (userId, role) =>
     send("PATCH", `/api/admin/users/${encodeURIComponent(userId)}`, { role });
 
-export const adminCreateAquarium = ({ name, ownerEmail }) => send("POST", "/api/admin/aquariums", { name, ownerEmail });
+export const adminCreateAquarium = ({ name, id, ownerEmail }) =>
+    send("POST", "/api/admin/aquariums", { name, id, ownerEmail });
 
 export const adminGetDevices = aquariumId => apiFetch(`/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`);
 

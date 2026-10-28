@@ -1,6 +1,5 @@
-import { aquariumRef, aquariumsRef, invalidateAquarium } from "../config/aquarium.js";
-import { db } from "../config/firebase.js";
-import { invalidateNotifications, notificationsRef, sharedNotification } from "./notifications.js";
+import { query, transaction } from "../config/db.js";
+import { addAquariumNotification } from "./notifications.js";
 
 const DEFAULT_POLL_SECONDS = 5;
 const MIN_OFFLINE_SECONDS = 120;
@@ -16,8 +15,8 @@ export function offlineThresholdSeconds(pollFrequency) {
 
 // ---------- Status terakhir di memori ----------
 
-// Pengecekan berkala tidak boleh membaca Firestore tiap 30 detik (2.880 baca/hari per akuarium).
-// Waktu telemetry terakhir dicatat di memori; Firestore baru dibaca saat sebuah perangkat tampak terlambat
+// Pengecekan berkala tidak perlu menanyakan database tiap 30 detik. Waktu telemetry terakhir dicatat di memori;
+// database baru dibaca saat sebuah perangkat tampak terlambat
 // aquariumId -> { lastSeenMs, pollFrequency, offlineNotified }
 const deviceState = new Map();
 
@@ -28,15 +27,16 @@ export function recordTelemetry(aquariumId, pollFrequency) {
 
 // Isi awal saat server menyala: satu kali baca semua akuarium
 async function loadInitialState() {
-    const snapshot = await aquariumsRef().get();
-    snapshot.docs.forEach(document => {
-        const { realtimeState, deviceMonitor, systemConfig } = document.data();
-        const lastUpdated = realtimeState?.lastUpdated?.toDate?.();
-        if (!lastUpdated) return;
-        deviceState.set(document.id, {
-            lastSeenMs: lastUpdated.getTime(),
-            pollFrequency: systemConfig?.pollFrequency,
-            offlineNotified: Boolean(deviceMonitor?.offlineNotified),
+    const { rows } = await query(
+        `select ds.aquarium_id, ds.last_updated, ds.offline_notified, a.system_config
+         from device_state ds join aquariums a on a.id = ds.aquarium_id
+         where ds.last_updated is not null`,
+    );
+    rows.forEach(row => {
+        deviceState.set(row.aquarium_id, {
+            lastSeenMs: row.last_updated.getTime(),
+            pollFrequency: row.system_config?.pollFrequency,
+            offlineNotified: row.offline_notified,
         });
     });
 }
@@ -44,40 +44,32 @@ async function loadInitialState() {
 // ---------- Pengecekan offline ----------
 
 // Perangkat yang offline tidak mengirim request, jadi hanya pengecekan berkala ini yang bisa mendeteksinya.
-// Flag `deviceMonitor.offlineNotified` mencegah notifikasi berulang; telemetry yang kembali masuk meresetnya.
-// Transaksi memastikan keputusan memakai data Firestore terbaru
+// Flag device_state.offline_notified mencegah notifikasi berulang; telemetry yang kembali masuk meresetnya.
+// Baris dikunci agar keputusan memakai data terbaru dan tidak bentrok dengan telemetry yang sedang masuk
 async function notifyOffline(aquariumId) {
-    const reference = aquariumRef(aquariumId);
-    let notified = false;
-    await db.runTransaction(async transaction => {
-        notified = false;
-        const snapshot = await transaction.get(reference);
-        if (!snapshot.exists) return;
-
-        const data = snapshot.data();
-        const lastUpdated = data.realtimeState?.lastUpdated?.toDate?.();
-        if (!lastUpdated || data.deviceMonitor?.offlineNotified) return;
-
-        const thresholdSeconds = offlineThresholdSeconds(data.systemConfig?.pollFrequency);
-        if ((Date.now() - lastUpdated.getTime()) / 1000 <= thresholdSeconds) return;
-
-        notified = true;
-        transaction.update(reference, { "deviceMonitor.offlineNotified": true });
-        transaction.set(
-            notificationsRef(aquariumId).doc(),
-            sharedNotification({
-                aquariumId,
-                actorName: "Aquarium hardware",
-                title: "Device Offline",
-                message: `No data has been received from the aquarium hardware for more than ${Math.floor(thresholdSeconds / 60)} minutes. Check its power and Wi-Fi connection. Commands will run when it reconnects.`,
-                type: "alert",
-            }),
+    await transaction(async client => {
+        const { rows } = await client.query(
+            `select ds.last_updated, ds.offline_notified, a.system_config
+             from device_state ds join aquariums a on a.id = ds.aquarium_id
+             where ds.aquarium_id = $1
+             for update of ds`,
+            [aquariumId],
         );
+        const state = rows[0];
+        if (!state?.last_updated || state.offline_notified) return;
+
+        const thresholdSeconds = offlineThresholdSeconds(state.system_config?.pollFrequency);
+        if ((Date.now() - state.last_updated.getTime()) / 1000 <= thresholdSeconds) return;
+
+        await client.query("update device_state set offline_notified = true where aquarium_id = $1", [aquariumId]);
+        await addAquariumNotification(client, {
+            aquariumId,
+            actorName: "Aquarium hardware",
+            title: "Device Offline",
+            message: `No data has been received from the aquarium hardware for more than ${Math.floor(thresholdSeconds / 60)} minutes. Check its power and Wi-Fi connection. Commands will run when it reconnects.`,
+            type: "alert",
+        });
     });
-    if (notified) {
-        invalidateAquarium(aquariumId);
-        invalidateNotifications(aquariumId);
-    }
 }
 
 async function checkDevices() {
@@ -87,8 +79,7 @@ async function checkDevices() {
 
         await notifyOffline(aquariumId);
         // Berhenti memeriksa sampai telemetry berikutnya (recordTelemetry mengaktifkannya lagi)
-        const current = deviceState.get(aquariumId);
-        if (current === state) state.offlineNotified = true;
+        if (deviceState.get(aquariumId) === state) state.offlineNotified = true;
     }
 }
 

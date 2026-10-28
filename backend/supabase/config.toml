@@ -1,0 +1,35 @@
+# Konfigurasi Supabase CLI untuk project ini. Perintah `npx supabase ...` dijalankan dari folder backend/.
+# Dipakai oleh `supabase start` (database lokal lewat Docker), `supabase link`, `supabase db push`,
+# dan integrasi GitHub Supabase, yang membaca folder supabase/ di repo ini.
+
+project_id = "smart-aquarium"
+
+[api]
+# Data API (PostgREST) dimatikan: data hanya diakses backend lewat koneksi database langsung. Auth tetap berjalan
+enabled = false
+port = 54321
+schemas = ["public"]
+
+[db]
+port = 54322
+# Samakan dengan versi Postgres project di dashboard (Project Settings > Infrastructure)
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# Lokal: tanpa konfirmasi email agar bisa langsung masuk. Pengaturan project di cloud ada di dashboard
+# (Authentication > Sign In / Providers > Email)
+enable_confirmations = false

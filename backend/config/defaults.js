@@ -1,25 +1,12 @@
-// Data awal akuarium yang dibuat admin. `members` memetakan userId ke "owner" atau "member";
-// `memberIds` salinan kuncinya untuk query array-contains.
-// hardwareInfo dan realtimeState nanti diisi oleh ESP32
-export function createDefaultAquarium({ name, createdBy, ownerId = null }) {
+// Config awal akuarium baru. hardwareInfo dan status realtime nanti diisi oleh ESP32 (device_state)
+export function createDefaultAquarium() {
     return {
-        name,
-        createdBy,
-        members: ownerId ? { [ownerId]: "owner" } : {},
-        memberIds: ownerId ? [ownerId] : [],
         hardwareInfo: {
             microcontroller: null,
             tempSensor: null,
             lighting: null,
             feeder: null,
             firmwareVersion: null,
-        },
-        realtimeState: {
-            currentTemp: null,
-            heaterStatus: "OFF",
-            ledStatus: "OFF",
-            feederStatus: "Idle",
-            lastUpdated: null,
         },
         tempConfig: {
             unit: "Celsius",
@@ -38,18 +25,14 @@ export function createDefaultAquarium({ name, createdBy, ownerId = null }) {
                 durationHours: null,
                 isActive: false,
             },
-            avgHoursOn: null,
-            avgHoursOff: null,
         },
         feederConfig: {
             mode: "MANUAL",
             schedules: [],
-            lastTriggeredAt: null,
         },
         systemConfig: {
             pollFrequency: 30,
             timezone: "Asia/Jakarta",
         },
-        lightingUsage: {},
     };
 }

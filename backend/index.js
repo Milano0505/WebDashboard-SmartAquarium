@@ -1,6 +1,7 @@
 import cors from "cors";
 import "dotenv/config";
 import express from "express";
+import { query } from "./config/db.js";
 import adminRoutes from "./routes/admin.js";
 import aquariumRoutes from "./routes/aquariums.js";
 import authRoutes from "./routes/auth.js";
@@ -59,5 +60,9 @@ app.use((error, req, res, next) => {
 
 app.listen(port, () => {
     console.log(`Smart Aquarium API listening on port ${port}`);
+    // Cek koneksi di awal agar salah konfigurasi DATABASE_URL langsung terlihat di log
+    query("select 1")
+        .then(() => console.log("Database connected"))
+        .catch(error => console.error("Database connection failed:", error.message));
     startDeviceWatchdog();
 });
