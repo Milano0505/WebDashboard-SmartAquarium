@@ -1,15 +1,12 @@
-// Peran: admin bersifat global (users/{uid}.role), owner dan member berlaku per akuarium (aquariums/{id}.members)
+// Peran: admin bersifat global (profiles.role), owner dan member berlaku per akuarium (aquarium_members.role)
 export const AQUARIUM_ROLES = ["owner", "member"];
 
 const RANK = { member: 1, owner: 2, admin: 3 };
 
 export const hasRole = (role, minimum) => (RANK[role] || 0) >= RANK[minimum];
 
-// Peran user pada satu akuarium: admin selalu admin, lainnya dari peta `members`; null jika bukan anggota
-export function roleInAquarium(auth, aquariumData) {
-    if (auth.role === "admin") return "admin";
-    return aquariumData.members?.[auth.userId] ?? null;
-}
-
-// ID akuarium dipakai sebagai ID dokumen; tolak yang berisi "/" atau terlalu panjang
+// ID akuarium dipakai di URL dan firmware; batasi karakternya
 export const isValidAquariumId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+
+export const isUuid = value =>
+    typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);

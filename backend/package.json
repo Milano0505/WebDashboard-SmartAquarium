@@ -7,23 +7,22 @@
     "scripts": {
         "start": "node index.js",
         "dev": "nodemon index.js",
-        "format": "prettier --write \"**/*.js\""
+        "format": "prettier --write \"**/*.js\"",
+        "test": "node --test"
     },
     "keywords": [],
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "@supabase/supabase-js": "^2.118.0",
         "cors": "^2.8.6",
         "dotenv": "^18.0.4",
         "express": "^5.2.1",
-        "firebase-admin": "^14.5.0"
+        "pg": "^8.23.1"
     },
     "devDependencies": {
+        "@electric-sql/pglite": "^0.5.12",
         "nodemon": "^3.1.14",
         "prettier": "^3.9.9"
-    },
-    "allowScripts": {
-        "@firebase/util@1.15.3": true,
-        "protobufjs@7.6.6": true
     }
 }

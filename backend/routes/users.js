@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { admin, db } from "../config/firebase.js";
+import { query, transaction } from "../config/db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { toIsoString } from "../utils/firestore.js";
-import { addPrivateNotifications, invalidateNotifications } from "../utils/notifications.js";
+import { isUuid } from "../utils/access.js";
+import { addUserNotification } from "../utils/notifications.js";
 import { isValidProfilePhotoUrl } from "../utils/profile-photo.js";
 
 const router = Router();
@@ -10,16 +10,16 @@ router.use(requireAuth);
 
 // ---------- Fungsi bantu ----------
 
-function userProfile(userId, user) {
+function userProfile(row) {
     return {
-        id: userId,
-        userId,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role === "admin" ? "admin" : "user",
-        photoUrl: user.photoUrl ?? null,
-        createdAt: toIsoString(user.createdAt),
-        updatedAt: toIsoString(user.updatedAt),
+        id: row.id,
+        userId: row.id,
+        fullName: row.full_name,
+        email: row.email,
+        role: row.role === "admin" ? "admin" : "user",
+        photoUrl: row.photo_url ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
     };
 }
 
@@ -34,9 +34,11 @@ router.get("/:userId", async (req, res) => {
     if (!isOwnProfile(req) && req.auth.role !== "admin") {
         return res.status(403).json({ message: "You cannot access this user profile." });
     }
-    const userDoc = await db.collection("users").doc(req.params.userId).get();
-    if (!userDoc.exists) return res.status(404).json({ message: "User profile was not found." });
-    return res.json(userProfile(userDoc.id, userDoc.data()));
+    if (!isUuid(req.params.userId)) return res.status(404).json({ message: "User profile was not found." });
+
+    const { rows } = await query("select * from profiles where id = $1", [req.params.userId]);
+    if (!rows[0]) return res.status(404).json({ message: "User profile was not found." });
+    return res.json(userProfile(rows[0]));
 });
 
 // Hanya fullName dan photoUrl yang bisa diubah; email tetap
@@ -49,7 +51,7 @@ router.put("/:userId", async (req, res) => {
         if (!fullName || fullName.length > 120) {
             return res.status(400).json({ message: "Full name must be between 1 and 120 characters." });
         }
-        updates.fullName = fullName;
+        updates.full_name = fullName;
     }
     if (req.body.photoUrl !== undefined) {
         if (!isValidProfilePhotoUrl(req.body.photoUrl)) {
@@ -57,29 +59,36 @@ router.put("/:userId", async (req, res) => {
                 .status(400)
                 .json({ message: "Profile photo must be a small JPEG data URL, an HTTP(S) URL, or null." });
         }
-        updates.photoUrl = req.body.photoUrl;
+        updates.photo_url = req.body.photoUrl;
     }
     if (Object.keys(updates).length === 0) {
         return res.status(400).json({ message: "No supported profile fields were provided." });
     }
 
-    const userRef = db.collection("users").doc(req.auth.userId);
-    const currentUser = (await userRef.get()).data() || {};
-    if (Object.keys(updates).every(field => updates[field] === currentUser[field])) {
-        return res.json({ updatedAt: new Date().toISOString(), message: "No profile changes detected." });
-    }
+    const changed = await transaction(async client => {
+        const { rows } = await client.query("select full_name, photo_url from profiles where id = $1 for update", [
+            req.auth.userId,
+        ]);
+        const current = rows[0];
+        if (!current) return null;
+        if (Object.keys(updates).every(column => updates[column] === current[column])) return false;
 
-    const batch = db.batch();
-    batch.update(userRef, { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-    const notified = await addPrivateNotifications(
-        batch,
-        req.auth.userId,
-        "Profile updated",
-        "Your profile information was updated.",
-    );
-    await batch.commit();
-    notified.forEach(invalidateNotifications);
-    return res.json({ updatedAt: new Date().toISOString(), message: "Profile updated successfully." });
+        // Nama kolom berasal dari daftar tetap di atas, bukan dari input
+        const columns = Object.keys(updates);
+        const assignments = columns.map((column, index) => `${column} = $${index + 2}`).join(", ");
+        await client.query(`update profiles set ${assignments}, updated_at = now() where id = $1`, [
+            req.auth.userId,
+            ...columns.map(column => updates[column]),
+        ]);
+        await addUserNotification(client, req.auth.userId, "Profile updated", "Your profile information was updated.");
+        return true;
+    });
+
+    if (changed === null) return res.status(404).json({ message: "User profile was not found." });
+    return res.json({
+        updatedAt: new Date().toISOString(),
+        message: changed ? "Profile updated successfully." : "No profile changes detected.",
+    });
 });
 
 export default router;

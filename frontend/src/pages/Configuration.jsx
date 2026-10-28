@@ -106,8 +106,8 @@ const TECH_STACK = [
     ["Build Tool", "Vite 8"],
     ["Routing", "React Router 7"],
     ["Backend", "Node.js + Express 5"],
-    ["Database", "Firebase Firestore"],
-    ["Authentication", "JWT + bcrypt"],
+    ["Database", "Supabase PostgreSQL"],
+    ["Authentication", "Supabase Auth"],
     ["Device API", "HTTP REST API"],
 ];
 

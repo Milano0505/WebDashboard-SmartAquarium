@@ -1,7 +1,6 @@
-import { onAuthStateChanged } from "firebase/auth";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { logout as apiLogout, getAquariums, isAuthBusy, startSession, updateUserProfile } from "../api/service";
-import { auth } from "../firebase";
+import { auth } from "../supabase";
 
 const AuthContext = createContext(null);
 const ACTIVE_AQUARIUM_KEY = "sa_active_aquarium";
@@ -30,7 +29,7 @@ function saveActiveAquarium(aquariumId) {
 
 // ---------- Provider ----------
 
-// Status login dipegang Firebase Authentication (onAuthStateChanged). Profil, peran admin, dan daftar
+// Status login dipegang Supabase Auth (onAuthStateChange). Profil, peran admin, dan daftar
 // akuarium diambil dari backend setiap aplikasi dibuka
 export function AuthProvider({ children }) {
     const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -66,7 +65,7 @@ export function AuthProvider({ children }) {
         }
     };
 
-    // Jalan sekali saat aplikasi dibuka, lalu setiap status login Firebase berubah
+    // Jalan sekali saat aplikasi dibuka, lalu setiap status login Supabase berubah
     useEffect(() => {
         let isMounted = true;
 
@@ -93,17 +92,24 @@ export function AuthProvider({ children }) {
             }
         };
 
-        const unsubscribe = onAuthStateChanged(auth, async firebaseUser => {
-            if (!firebaseUser) {
-                if (isMounted) {
-                    clearSession();
-                    setIsAuthLoading(false);
+        // INITIAL_SESSION datang sekali saat dibuka. TOKEN_REFRESHED tiap jam tidak perlu memuat ulang profil
+        const {
+            data: { subscription },
+        } = auth.onAuthStateChange((event, session) => {
+            if (event === "TOKEN_REFRESHED") return;
+            // Jangan memanggil Supabase langsung di dalam callback ini (bisa menahan kunci auth): tunda satu tick
+            setTimeout(async () => {
+                if (!session) {
+                    if (isMounted) {
+                        clearSession();
+                        setIsAuthLoading(false);
+                    }
+                    return;
                 }
-                return;
-            }
-            // Login/register sedang berjalan; mereka memuat sesi sendiri lewat signIn()
-            if (!isAuthBusy()) await loadSession();
-            if (isMounted) setIsAuthLoading(false);
+                // Login/register sedang berjalan; mereka memuat sesi sendiri lewat signIn()
+                if (!isAuthBusy()) await loadSession();
+                if (isMounted) setIsAuthLoading(false);
+            }, 0);
         });
 
         // Dipicu client API saat respons 401
@@ -115,7 +121,7 @@ export function AuthProvider({ children }) {
 
         return () => {
             isMounted = false;
-            unsubscribe();
+            subscription.unsubscribe();
             window.removeEventListener("sa:unauthorized", handleUnauthorized);
         };
     }, [clearSession]);

@@ -1,6 +1,6 @@
-// Cache memori sederhana untuk menekan baca Firestore (kuota gratis 50.000 baca/hari).
-// Aman karena semua penulisan lewat proses backend ini: setiap penulisan memanggil delete/deletePrefix.
-// ttlMs tetap jadi batas atas jika dokumen diubah dari luar (mis. skrip migrasi atau Firebase console).
+// Cache memori sederhana untuk data yang jarang berubah (peran user, kunci perangkat, token terverifikasi),
+// supaya tiap request tidak menambah query. Perubahan lewat proses backend ini memanggil delete/clear.
+// ttlMs tetap jadi batas atas jika data diubah dari luar (mis. langsung di SQL editor Supabase).
 // Catatan: bila backend dijalankan lebih dari satu instance, data bisa basi sampai ttlMs
 export function createCache({ ttlMs, maxEntries = 500 }) {
     const entries = new Map();

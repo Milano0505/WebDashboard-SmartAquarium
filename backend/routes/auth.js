@@ -1,14 +1,12 @@
 import { Router } from "express";
-import { admin, db } from "../config/firebase.js";
+import { query, transaction } from "../config/db.js";
 import { invalidateRole, requireAuth } from "../middleware/auth.js";
-import { toIsoString } from "../utils/firestore.js";
-import { addPrivateNotifications, invalidateNotifications } from "../utils/notifications.js";
+import { addUserNotification } from "../utils/notifications.js";
 import { isValidProfilePhotoUrl } from "../utils/profile-photo.js";
 
-// Register, login, dan ganti password dikerjakan Firebase Authentication di browser.
-// Backend hanya membuat salinan profil di Firestore (users/{uid}) dan memverifikasi ID token di setiap request.
+// Register, login, dan ganti password dikerjakan Supabase Auth di browser. Baris profil dibuat oleh trigger
+// database saat akun dibuat; backend memastikannya ada, menerapkan foto, dan memverifikasi token tiap request.
 const router = Router();
-const { FieldValue } = admin.firestore;
 
 // Email yang otomatis menjadi admin saat sesi dibuka (pemula sistem; selanjutnya admin mengatur lewat dashboard)
 const ADMIN_EMAILS = new Set(
@@ -20,22 +18,22 @@ const ADMIN_EMAILS = new Set(
 
 // ---------- Fungsi bantu ----------
 
-function createUserProfile(userId, user) {
+function createUserProfile(row) {
     return {
-        id: userId,
-        userId,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role === "admin" ? "admin" : "user",
-        photoUrl: user.photoUrl ?? null,
-        createdAt: toIsoString(user.createdAt),
+        id: row.id,
+        userId: row.id,
+        fullName: row.full_name,
+        email: row.email,
+        role: row.role === "admin" ? "admin" : "user",
+        photoUrl: row.photo_url ?? null,
+        createdAt: row.created_at,
     };
 }
 
 // ---------- Route ----------
 
-// Dipanggil frontend setelah register/login dan setiap aplikasi dibuka.
-// Membuat profil jika belum ada, atau menyegarkan peran admin dari ADMIN_EMAILS, lalu mengembalikan profil
+// Dipanggil frontend setelah login dan setiap aplikasi dibuka.
+// Memastikan profil ada, menerapkan foto jika dikirim, menyegarkan peran admin dari ADMIN_EMAILS, lalu mengembalikan profil
 router.post("/session", requireAuth, async (req, res) => {
     const { userId, email } = req.auth;
     if (!email) return res.status(400).json({ message: "The account has no email address." });
@@ -52,46 +50,32 @@ router.post("/session", requireAuth, async (req, res) => {
             .json({ message: "Profile photo must be a small JPEG data URL, an HTTP(S) URL, or null." });
     }
 
-    const shouldBeAdmin = ADMIN_EMAILS.has(email);
-    const reference = db.collection("users").doc(userId);
-    const profile = await db.runTransaction(async transaction => {
-        const snapshot = await transaction.get(reference);
-        if (!snapshot.exists) {
-            const created = {
-                fullName,
-                email,
-                role: shouldBeAdmin ? "admin" : "user",
-                photoUrl,
-                createdAt: FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
-            };
-            transaction.create(reference, created);
-            return { ...created, createdAt: new Date() };
-        }
-
-        const data = snapshot.data();
-        if (shouldBeAdmin && data.role !== "admin") {
-            transaction.update(reference, { role: "admin", updatedAt: FieldValue.serverTimestamp() });
-            return { ...data, role: "admin" };
-        }
-        return data;
+    const makeAdmin = ADMIN_EMAILS.has(email);
+    const profile = await transaction(async client => {
+        // Trigger biasanya sudah membuat baris; insert ini hanya jaga-jaga (mis. akun dibuat sebelum trigger ada)
+        await client.query(
+            `insert into profiles (id, full_name, email) values ($1, $2, $3) on conflict (id) do nothing`,
+            [userId, fullName.slice(0, 120), email],
+        );
+        const { rows } = await client.query(
+            `update profiles
+             set photo_url = coalesce($2, photo_url),
+                 role = case when $3 then 'admin' else role end,
+                 updated_at = case when $2 is not null or ($3 and role <> 'admin') then now() else updated_at end
+             where id = $1
+             returning *`,
+            [userId, photoUrl, makeAdmin],
+        );
+        return rows[0];
     });
 
     invalidateRole(userId);
-    return res.json({ userId, userProfile: createUserProfile(userId, profile) });
+    return res.json({ userId, userProfile: createUserProfile(profile) });
 });
 
-// Password diganti di browser lewat Firebase; endpoint ini hanya mencatat notifikasi privat
+// Password diganti di browser lewat Supabase; endpoint ini hanya mencatat notifikasi privat
 router.post("/password-changed", requireAuth, async (req, res) => {
-    const batch = db.batch();
-    const notified = await addPrivateNotifications(
-        batch,
-        req.auth.userId,
-        "Password updated",
-        "Your account password was changed.",
-    );
-    await batch.commit();
-    notified.forEach(invalidateNotifications);
+    await addUserNotification({ query }, req.auth.userId, "Password updated", "Your account password was changed.");
     return res.json({ message: "Password change recorded." });
 });
 

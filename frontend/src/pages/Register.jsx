@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { register } from "../api/service";
 import { Camera, ChevronLeft, Eye, EyeOff, Fish, Lock, Mail, User } from "../components/Icons";
-import { ErrorAlert, InputField, PrimaryBtn } from "../components/ui";
+import { ErrorAlert, InputField, PrimaryBtn, SuccessAlert } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 import { initialsOf } from "../utils/format";
 import { createProfilePhotoDataUrl } from "../utils/profilePhoto";
@@ -19,6 +19,7 @@ export default function RegisterPage() {
     const [showPw, setShowPw] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [confirmationSent, setConfirmationSent] = useState(false);
     const { signIn } = useAuth();
     const navigate = useNavigate();
     const fileRef = useRef();
@@ -63,12 +64,17 @@ export default function RegisterPage() {
         try {
             // Foto opsional dikecilkan dan dikompres jadi data URL JPEG
             const photoUrl = avatarFile ? await createProfilePhotoDataUrl(avatarFile) : null;
-            const { userProfile } = await register({
+            const { userProfile, needsConfirmation } = await register({
                 fullName: form.name,
                 email: form.email,
                 password: form.password,
                 photoUrl,
             });
+            // Proyek mewajibkan konfirmasi email: belum ada sesi, jadi arahkan ke login setelah dikonfirmasi
+            if (needsConfirmation) {
+                setConfirmationSent(true);
+                return;
+            }
             await signIn(userProfile);
             navigate("/dashboard", { replace: true });
         } catch (err) {
@@ -77,6 +83,22 @@ export default function RegisterPage() {
             setLoading(false);
         }
     };
+
+    if (confirmationSent) {
+        return (
+            <div
+                className="min-h-screen flex items-center justify-center p-4"
+                style={{ background: "linear-gradient(160deg, #060d2c 0%, #0d1b4b 60%, #1e3a8a 100%)" }}
+            >
+                <div className="w-full max-w-[430px] space-y-4 rounded-3xl bg-white p-6">
+                    <SuccessAlert message="Account created. Check your email to confirm it, then sign in." />
+                    <Link to="/login" className="block text-center text-sm font-semibold text-blue-500 hover:underline">
+                        Go to sign in
+                    </Link>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div

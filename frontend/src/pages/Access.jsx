@@ -258,17 +258,19 @@ function DevicesSection({ aquariumId }) {
 function CreateAquariumSection() {
     const { refreshAquariums, selectAquarium } = useAuth();
     const [name, setName] = useState("");
+    const [aquariumId, setAquariumId] = useState("");
     const [ownerEmail, setOwnerEmail] = useState("");
     const { status, busy, run } = useAction();
 
     const handleCreate = async event => {
         event.preventDefault();
         const result = await run(
-            () => adminCreateAquarium({ name, ownerEmail: ownerEmail || undefined }),
+            () => adminCreateAquarium({ name, id: aquariumId || undefined, ownerEmail: ownerEmail || undefined }),
             "Aquarium created.",
         );
         if (result) {
             setName("");
+            setAquariumId("");
             setOwnerEmail("");
             await refreshAquariums();
             selectAquarium(result.id);
@@ -287,6 +289,14 @@ function CreateAquariumSection() {
                     value={name}
                     onChange={event => setName(event.target.value)}
                     placeholder="Aquarium name"
+                    className={inputClass}
+                />
+                <input
+                    pattern="[A-Za-z0-9_\-]{1,64}"
+                    title="Letters, numbers, dash and underscore only"
+                    value={aquariumId}
+                    onChange={event => setAquariumId(event.target.value)}
+                    placeholder="Aquarium ID (optional)"
                     className={inputClass}
                 />
                 <input
