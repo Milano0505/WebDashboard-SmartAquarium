@@ -137,7 +137,12 @@ export function AuthProvider({ children }) {
     };
 
     const isAdmin = user?.role === "admin";
-    const canControl = activeRole === "owner" || activeRole === "admin";
+    // member, owner, dan admin boleh mengubah akuarium; viewer hanya melihat monitoring
+    const canControl = activeRole === "member" || activeRole === "owner" || activeRole === "admin";
+    const isViewer = activeRole === "viewer";
+    // Akuarium yang dimiliki user sebagai owner; halaman Access dibuka untuk admin dan siapa pun yang punya satu
+    const ownedAquariums = aquariums.filter(item => item.role === "owner");
+    const canOpenAccess = isAdmin || ownedAquariums.length > 0;
 
     return (
         <AuthContext.Provider
@@ -155,7 +160,10 @@ export function AuthProvider({ children }) {
                 selectAquarium,
                 isAdmin,
                 canControl,
-                canManageAccess: canControl,
+                canManageAccess: activeRole === "owner" || activeRole === "admin",
+                canOpenAccess,
+                isViewer,
+                ownedAquariums,
             }}
         >
             {children}

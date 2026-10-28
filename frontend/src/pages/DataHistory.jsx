@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { exportTelemetry, getAquarium, getTelemetry } from "../api/service";
 import { ChevronLeft, ChevronRight, Download, Search } from "../components/Icons";
 import { Card, ErrorAlert, PageHeader, Spinner, StatusBadge } from "../components/ui";
+import { useAuth } from "../context/AuthContext";
 
 const PER_PAGE = 10;
 const FILTERS = ["all", "heater", "led", "feeder", "temp", "system"];
@@ -136,6 +137,7 @@ function RecordList({ records, labels }) {
 // ---------- Tab Table ----------
 
 function TableTab({ records }) {
+    const { activeAquariumId } = useAuth();
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
     const [page, setPage] = useState(1);
@@ -170,7 +172,7 @@ function TableTab({ records }) {
         setExportError("");
         setExporting(true);
         try {
-            await downloadCsv();
+            await downloadCsv(activeAquariumId);
         } catch (error) {
             setExportError(error.message || "Could not export telemetry data.");
         } finally {

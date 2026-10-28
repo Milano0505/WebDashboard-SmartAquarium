@@ -4,14 +4,22 @@ import { useAuth } from "../context/AuthContext";
 import { initialsOf } from "../utils/format";
 import { Bell, ChevronLeft, ChevronRight, Dashboard, Fish, History, Logout, Settings, User } from "./Icons";
 
-const NAV = [
-    { path: "/dashboard", label: "Dashboard", icon: Dashboard },
-    { path: "/history", label: "History", icon: History },
-    { path: "/notifications", label: "Alerts", icon: Bell },
-    { path: "/configuration", label: "Config", icon: Settings },
-];
-const ACCESS_NAV = { path: "/access", label: "Access", icon: User };
+const NAV = {
+    dashboard: { path: "/dashboard", label: "Dashboard", icon: Dashboard },
+    history: { path: "/history", label: "History", icon: History },
+    alerts: { path: "/notifications", label: "Alerts", icon: Bell },
+    config: { path: "/configuration", label: "Config", icon: Settings },
+    access: { path: "/access", label: "Access", icon: User },
+};
 const NAVY = "#0d1b4b";
+
+// Gaya lencana peran di header
+const ROLE_BADGE = {
+    admin: "bg-purple-500/40 text-purple-100",
+    owner: "bg-blue-500/40 text-blue-100",
+    member: "bg-sky-500/30 text-sky-100",
+    viewer: "bg-white/10 text-slate-300",
+};
 
 function UnreadBadge({ count }) {
     if (count <= 0) return null;
@@ -24,15 +32,22 @@ function UnreadBadge({ count }) {
 
 // Kerangka aplikasi: sidebar, header, navigasi bawah (mobile), dan toast
 export default function Layout({ children, notifCount = 0, systemNotice, onDismissSystemNotice }) {
-    const { user, signOut, aquariums, activeAquariumId, activeRole, selectAquarium, isAdmin, canManageAccess } =
+    const { user, signOut, aquariums, activeAquariumId, activeRole, selectAquarium, isViewer, canOpenAccess } =
         useAuth();
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [collapsed, setCollapsed] = useState(false);
 
     const displayName = user?.fullName || "Aquarist";
-    // Menu Access hanya untuk owner dan admin
-    const navItems = isAdmin || canManageAccess ? [...NAV, ACCESS_NAV] : NAV;
+    // Menu menurut peran: viewer hanya Dashboard dan Config; Access hanya admin dan owner; tanpa akuarium aktif
+    // tidak ada halaman data yang bisa dibuka
+    const hasAquarium = Boolean(activeAquariumId);
+    const navItems = [
+        ...(hasAquarium ? [NAV.dashboard] : []),
+        ...(hasAquarium && !isViewer ? [NAV.history, NAV.alerts] : []),
+        NAV.config,
+        ...(canOpenAccess ? [NAV.access] : []),
+    ];
     const isActive = path => pathname === path || pathname.startsWith(`${path}/`);
     const pageLabel = navItems.find(item => isActive(item.path))?.label || "Dashboard";
 
@@ -156,7 +171,9 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                                     </span>
                                 )}
                                 {activeRole && (
-                                    <span className="rounded-full bg-blue-500/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-100">
+                                    <span
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ROLE_BADGE[activeRole] || ROLE_BADGE.viewer}`}
+                                    >
                                         {activeRole}
                                     </span>
                                 )}
