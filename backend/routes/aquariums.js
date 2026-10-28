@@ -2,7 +2,7 @@ import { Router } from "express";
 import { aquariumResponse, configSections, findAquarium } from "../config/aquarium.js";
 import { query, transaction } from "../config/db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { AQUARIUM_ROLES, hasRole, isUuid } from "../utils/access.js";
+import { ASSIGNABLE_ROLES, hasRole, isUuid } from "../utils/access.js";
 import { publishConfigChange } from "../utils/config-events.js";
 import { configRules, validateTemperatureRange } from "../utils/config-validation.js";
 import { badRequest, forbidden } from "../utils/errors.js";
@@ -97,7 +97,7 @@ function patchConfig(section, successMessage) {
         const entries = rawEntries.map(([field, value]) => [field, rules[field](value)]);
 
         const outcome = await transaction(async client => {
-            const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner", { client, lock: true });
+            const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member", { client, lock: true });
             if (!aquarium) return null;
 
             const current = configSections(aquarium.row);
@@ -186,16 +186,24 @@ async function telemetryRecords(aquariumId, params) {
 
 // ---------- Akuarium & konfigurasi ----------
 
-// Akuarium yang bisa diakses user: admin melihat semuanya, lainnya hanya yang mereka anggotai
+// Akuarium yang bisa diakses user: admin melihat semuanya; owner dan member hanya yang mereka anggotai;
+// user tanpa keanggotaan apa pun (viewer) melihat akuarium yang monitoringnya publik
 router.get("/", async (req, res) => {
     const { rows } =
         req.auth.role === "admin"
             ? await query("select id, name, 'admin' as role from aquariums order by name")
             : await query(
-                  `select a.id, a.name, m.role
-                   from aquarium_members m join aquariums a on a.id = m.aquarium_id
-                   where m.user_id = $1
-                   order by a.name`,
+                  `select id, name, role from (
+                       select a.id, a.name, m.role
+                       from aquarium_members m join aquariums a on a.id = m.aquarium_id
+                       where m.user_id = $1
+                       union all
+                       select a.id, a.name, 'viewer' as role
+                       from aquariums a
+                       where a.monitoring_public
+                         and not exists (select 1 from aquarium_members x where x.user_id = $1)
+                   ) access
+                   order by name`,
                   [req.auth.userId],
               );
     return res.json({ aquariums: rows });
@@ -214,7 +222,7 @@ router.patch("/:aquariumId/system-config", patchConfig("systemConfig", "System c
 
 router.post("/:aquariumId/feeder/trigger", async (req, res) => {
     const outcome = await transaction(async client => {
-        const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner", { client, lock: true });
+        const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member", { client, lock: true });
         if (!aquarium) return null;
         if (aquarium.row.feeder_config?.mode !== "MANUAL") return { notManual: true };
 
@@ -243,7 +251,7 @@ router.post("/:aquariumId/feeder/trigger", async (req, res) => {
 // ---------- Telemetry ----------
 
 router.get("/:aquariumId/telemetry/export", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (req.query.format && req.query.format !== "csv") throw badRequest("Only CSV export is supported.");
 
@@ -301,7 +309,7 @@ router.get("/:aquariumId/notifications", async (req, res) => {
 });
 
 router.patch("/:aquariumId/notifications/read-all", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
     await query(
@@ -327,7 +335,7 @@ async function visibleNotification(aquariumId, userId, notificationId) {
 }
 
 router.patch("/:aquariumId/notifications/:notificationId/read", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (!(await visibleNotification(aquarium.id, req.auth.userId, req.params.notificationId))) {
         return res.status(404).json({ message: "Notification was not found." });
@@ -343,7 +351,7 @@ router.patch("/:aquariumId/notifications/:notificationId/read", async (req, res)
 
 // "Hapus" hanya menyembunyikan notifikasi untuk user ini; notifikasi bersama tetap terlihat oleh anggota lain
 router.delete("/:aquariumId/notifications/:notificationId", async (req, res) => {
-    const aquarium = await findAquarium(req.params.aquariumId, req.auth);
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "member");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
     if (!(await visibleNotification(aquarium.id, req.auth.userId, req.params.notificationId))) {
         return res.status(404).json({ message: "Notification was not found." });
@@ -359,34 +367,56 @@ router.delete("/:aquariumId/notifications/:notificationId", async (req, res) => 
 
 // ---------- Anggota ----------
 
-// Owner mengelola member di akuarium miliknya. Mengangkat atau mengubah owner hanya boleh admin
+// Owner hanya menambah dan menghapus member di akuarium miliknya (dan hanya melihat daftar member).
+// Menentukan owner khusus admin
 router.get("/:aquariumId/members", async (req, res) => {
     const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
+    // Admin melihat owner dan member; owner hanya melihat member
     const { rows } = await query(
         `select m.user_id as "userId", m.role, p.full_name as "fullName", p.email
          from aquarium_members m join profiles p on p.id = m.user_id
-         where m.aquarium_id = $1
-         order by m.created_at`,
-        [aquarium.id],
+         where m.aquarium_id = $1 and ($2 or m.role = 'member')
+         order by m.role desc, p.full_name`,
+        [aquarium.id, hasRole(aquarium.role, "admin")],
     );
     return res.json({ members: rows });
+});
+
+// User yang boleh ditambahkan ke akuarium ini: bukan admin dan belum menjadi anggotanya
+router.get("/:aquariumId/candidates", async (req, res) => {
+    const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
+    if (!aquarium) return res.status(404).json(NOT_FOUND);
+
+    const { rows } = await query(
+        `select p.id as "userId", p.full_name as "fullName", p.email
+         from profiles p
+         where p.role <> 'admin'
+           and not exists (select 1 from aquarium_members m where m.aquarium_id = $1 and m.user_id = p.id)
+         order by p.full_name, p.email`,
+        [aquarium.id],
+    );
+    return res.json({ candidates: rows });
 });
 
 router.put("/:aquariumId/members", async (req, res) => {
     const aquarium = await findAquarium(req.params.aquariumId, req.auth, "owner");
     if (!aquarium) return res.status(404).json(NOT_FOUND);
 
-    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    // Target dipilih lewat userId (dari daftar kandidat) atau email
     const { role } = req.body;
-    if (!email || !AQUARIUM_ROLES.includes(role)) {
-        throw badRequest('Provide a user email and a role of "owner" or "member".');
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if ((!isUuid(req.body.userId) && !email) || !ASSIGNABLE_ROLES.includes(role)) {
+        throw badRequest('Provide a user (userId or email) and a role of "owner" or "member".');
     }
 
-    const users = await query("select id from profiles where email = $1", [email]);
-    if (!users.rows[0]) return res.status(404).json({ message: "No user with this email was found." });
+    const users = isUuid(req.body.userId)
+        ? await query("select id, role from profiles where id = $1", [req.body.userId])
+        : await query("select id, role from profiles where email = $1", [email]);
+    if (!users.rows[0]) return res.status(404).json({ message: "User was not found." });
     const userId = users.rows[0].id;
+    if (users.rows[0].role === "admin") throw badRequest("Admins already have access to every aquarium.");
 
     const current = await query("select role from aquarium_members where aquarium_id = $1 and user_id = $2", [
         aquarium.id,

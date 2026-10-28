@@ -1,0 +1,9 @@
+# Status lokal Supabase CLI
+.temp
+.branches
+
+# Rahasia lokal
+.env
+.env.keys
+.env.local
+.env.*.local

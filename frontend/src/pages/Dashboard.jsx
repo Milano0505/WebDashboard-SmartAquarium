@@ -764,7 +764,7 @@ function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, savin
 export default function DashboardPage({ onSystemChange }) {
     const { tab = "overview" } = useParams();
     const navigate = useNavigate();
-    const { user, activeAquariumId: AQUARIUM_ID, canControl } = useAuth();
+    const { user, activeAquariumId: AQUARIUM_ID, canControl, isViewer } = useAuth();
 
     const [aquarium, setAquarium] = useState(null);
     const [chartData, setChartData] = useState([]);
@@ -876,9 +876,9 @@ export default function DashboardPage({ onSystemChange }) {
         <div className="px-4 py-5">
             <div className="text-xs text-slate-400 mb-0.5">Welcome, {user?.fullName}</div>
             <ErrorAlert message={actionError} />
-            {!canControl && (
+            {isViewer && (
                 <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    You have view-only access to this aquarium. Ask an owner or admin to change its settings.
+                    You have view-only access. Ask an admin to give you a role to change settings.
                 </div>
             )}
             <div className="flex items-center justify-between gap-3 mb-4">

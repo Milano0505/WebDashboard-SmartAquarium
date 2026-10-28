@@ -20,17 +20,19 @@ export async function getAquarium(aquariumId, client = { query }) {
 }
 
 // Ambil akuarium untuk user yang login sekaligus memeriksa perannya.
-// null = akuarium tidak ada (404); user yang bukan anggota atau perannya kurang ditolak dengan 403.
+// Peran: admin, owner/member (keanggotaan), atau viewer (user tanpa keanggotaan apa pun pada akuarium publik).
+// null = akuarium tidak ada (404); user tanpa akses atau perannya kurang ditolak dengan 403.
 // lock: kunci baris akuarium sampai transaksi selesai (untuk baca-ubah-tulis config)
 export async function findAquarium(
     aquariumId,
     auth,
-    minimumRole = "member",
+    minimumRole = "viewer",
     { client = { query }, lock = false } = {},
 ) {
     if (!isValidAquariumId(aquariumId)) return null;
     const { rows } = await client.query(
-        `select ${AQUARIUM_COLUMNS}, m.role as member_role
+        `select ${AQUARIUM_COLUMNS}, m.role as member_role,
+                (a.monitoring_public and not exists (select 1 from aquarium_members x where x.user_id = $2)) as viewer_access
          from aquariums a
          left join device_state ds on ds.aquarium_id = a.id
          left join aquarium_members m on m.aquarium_id = a.id and m.user_id = $2
@@ -41,7 +43,7 @@ export async function findAquarium(
     const row = rows[0];
     if (!row) return null;
 
-    const role = auth.role === "admin" ? "admin" : row.member_role;
+    const role = auth.role === "admin" ? "admin" : (row.member_role ?? (row.viewer_access ? "viewer" : null));
     if (!role) throw forbidden("You do not have access to this aquarium.");
     if (!hasRole(role, minimumRole)) throw forbidden(`This action requires the ${minimumRole} role.`);
     return { id: row.id, row, role };
@@ -79,6 +81,7 @@ export async function aquariumResponse(aquarium) {
         id: row.id,
         name: row.name,
         role,
+        monitoringPublic: row.monitoring_public,
         hardwareInfo: row.hardware_info,
         realtimeState: {
             currentTemp: row.current_temp,

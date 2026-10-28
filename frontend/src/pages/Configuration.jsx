@@ -19,6 +19,7 @@ import {
     SuccessAlert,
     Toggle,
 } from "../components/ui";
+import RoleBadge from "../components/RoleBadge";
 import { useAuth } from "../context/AuthContext";
 import { formatTemp, initialsOf } from "../utils/format";
 import { createProfilePhotoDataUrl } from "../utils/profilePhoto";
@@ -129,39 +130,45 @@ function ProfileTab() {
 
     const [fullName, setFullName] = useState(user?.fullName || "");
     const [photoUrl, setPhotoUrl] = useState(user?.photoUrl || null);
-    const [selectedPhoto, setSelectedPhoto] = useState(null);
     const [profileStatus, setProfileStatus] = useState({ error: "", saved: "" });
     const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
     const [showPasswords, setShowPasswords] = useState(false);
     const [passwordStatus, setPasswordStatus] = useState({ error: "", saved: "" });
     const [saving, setSaving] = useState(false);
 
-    // Lepas URL preview foto yang dipilih
-    useEffect(
-        () => () => {
-            if (photoUrl?.startsWith("blob:")) URL.revokeObjectURL(photoUrl);
-        },
-        [photoUrl],
-    );
+    // Foto langsung disimpan begitu dipilih (tanpa menunggu tombol Save Profile): dikecilkan jadi JPEG
+    // lalu dikirim sebagai perubahan profil terpisah, sehingga nama yang belum disimpan tidak ikut terkirim
+    const savePhoto = async file => {
+        setProfileStatus({ error: "", saved: "" });
+        setSaving(true);
+        try {
+            const nextPhotoUrl = file ? await createProfilePhotoDataUrl(file) : null;
+            await updateUserProfile(user.id, { photoUrl: nextPhotoUrl });
+            setUser({ ...user, photoUrl: nextPhotoUrl });
+            setPhotoUrl(nextPhotoUrl);
+            setProfileStatus({ error: "", saved: nextPhotoUrl ? "Profile photo updated." : "Profile photo removed." });
+            window.dispatchEvent(new Event("sa:notifications-changed"));
+        } catch (error) {
+            setProfileStatus({ error: error.message || "Could not save the profile photo.", saved: "" });
+        } finally {
+            setSaving(false);
+        }
+    };
 
     const handlePhotoSelected = event => {
         const file = event.target.files[0];
-        if (!file) return;
-        setPhotoUrl(URL.createObjectURL(file));
-        setSelectedPhoto(file);
-        setProfileStatus({ error: "", saved: "" });
+        // Kosongkan input agar memilih berkas yang sama lagi tetap memicu onChange
+        event.target.value = "";
+        if (file) savePhoto(file);
     };
 
+    // Hanya nama; foto disimpan terpisah oleh savePhoto
     const handleSaveProfile = async () => {
         setProfileStatus({ error: "", saved: "" });
         setSaving(true);
         try {
-            // Foto baru dikecilkan dan dikompres jadi data URL JPEG
-            const savedPhotoUrl = selectedPhoto ? await createProfilePhotoDataUrl(selectedPhoto) : photoUrl;
-            await updateUserProfile(user.id, { fullName, photoUrl: savedPhotoUrl });
-            setUser({ ...user, fullName, photoUrl: savedPhotoUrl });
-            setPhotoUrl(savedPhotoUrl);
-            setSelectedPhoto(null);
+            await updateUserProfile(user.id, { fullName });
+            setUser({ ...user, fullName });
             setProfileStatus({ error: "", saved: "Profile updated successfully." });
             window.dispatchEvent(new Event("sa:notifications-changed"));
         } catch (error) {
@@ -219,13 +226,28 @@ function ProfileTab() {
                             <Camera />
                         </div>
                     </button>
-                    <button
-                        type="button"
-                        className="text-xs text-blue-500 font-semibold"
-                        onClick={() => fileRef.current?.click()}
-                    >
-                        Change Photo
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            disabled={saving}
+                            className="text-xs text-blue-500 font-semibold disabled:opacity-50"
+                            onClick={() => fileRef.current?.click()}
+                        >
+                            {saving ? "Saving…" : "Change Photo"}
+                        </button>
+                        {photoUrl && (
+                            <button
+                                type="button"
+                                disabled={saving}
+                                className="text-xs text-slate-400 font-semibold hover:text-red-500 disabled:opacity-50"
+                                onClick={() => savePhoto(null)}
+                            >
+                                Remove
+                            </button>
+                        )}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-400">JPG, PNG, or WebP up to 10 MB. Saved right away.</p>
+
                     <input
                         ref={fileRef}
                         type="file"
@@ -448,8 +470,31 @@ function AlertsTab({ aquarium, updateSection, saving, onSave, browserNotificatio
 // ---------- Tab About ----------
 
 function AboutTab() {
+    const { aquariums, isAdmin } = useAuth();
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+            {/* Akuarium milik user (admin: semua akuarium) beserta perannya */}
+            <Card className="space-y-3 md:col-span-2">
+                <p className="text-sm font-bold text-slate-700">{isAdmin ? "All aquariums" : "Your aquariums"}</p>
+                {aquariums.length === 0 ? (
+                    <p className="text-sm text-slate-400">
+                        {isAdmin ? "No aquariums yet. Create one in Access." : "You have no aquarium yet."}
+                    </p>
+                ) : (
+                    <ul className="divide-y divide-slate-100">
+                        {aquariums.map(item => (
+                            <li key={item.id} className="flex items-center justify-between gap-3 py-2.5">
+                                <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-slate-800">{item.name}</div>
+                                    <div className="truncate font-mono text-xs text-slate-400">{item.id}</div>
+                                </div>
+                                <RoleBadge role={item.role} />
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </Card>
+
             <Card className="space-y-4">
                 <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-xl bg-blue-500 flex items-center justify-center text-white text-xl flex-shrink-0">
@@ -484,15 +529,17 @@ function AboutTab() {
 // ---------- Halaman ----------
 
 export default function ConfigurationPage({ browserNotifications }) {
-    const { activeAquariumId: AQUARIUM_ID, canControl } = useAuth();
+    const { activeAquariumId: AQUARIUM_ID, canControl, isViewer } = useAuth();
     const [tab, setTab] = useState("profile");
     const [aquarium, setAquarium] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(Boolean(AQUARIUM_ID));
     const [loadError, setLoadError] = useState("");
     const [settingsSaving, setSettingsSaving] = useState(false);
     const [settingsStatus, setSettingsStatus] = useState({ error: "", saved: "" });
 
+    // Tanpa akuarium aktif tidak ada yang dimuat; tab Profile dan About tetap bisa dipakai
     useEffect(() => {
+        if (!AQUARIUM_ID) return undefined;
         let isMounted = true;
         getAquarium(AQUARIUM_ID)
             .then(data => isMounted && setAquarium(data))
@@ -501,7 +548,7 @@ export default function ConfigurationPage({ browserNotifications }) {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [AQUARIUM_ID]);
 
     // Perubahan disimpan lokal sampai tombol Save ditekan
     const updateSection = (section, patch) =>
@@ -566,24 +613,50 @@ export default function ConfigurationPage({ browserNotifications }) {
         }
     };
 
-    if (loading || loadError || !aquarium) {
+    // Isi tab System dan Alerts: tergantung akuarium aktif dan status pemuatannya
+    const renderAquariumTab = () => {
+        if (!AQUARIUM_ID) {
+            return <p className="py-8 text-center text-sm text-slate-400">No aquarium is selected.</p>;
+        }
+        if (loading) return <Spinner />;
+        if (loadError) return <ErrorAlert message={loadError} />;
+        if (!aquarium) return <p className="py-8 text-center text-sm text-slate-400">No Data</p>;
+
         return (
-            <div className="px-4 py-5">
-                <PageHeader title="Configuration" />
-                {loading ? (
-                    <Spinner />
-                ) : loadError ? (
-                    <ErrorAlert message={loadError} />
-                ) : (
-                    <p className="py-8 text-center text-sm text-slate-400">No Data</p>
+            <>
+                {isViewer && (
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                        You have view-only access. Ask an admin to give you a role to change settings.
+                    </div>
                 )}
-            </div>
+                {/* Tanpa peran (viewer) semua kontrol dimatikan; backend juga menolak dengan 403 */}
+                <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
+                    {tab === "system" && (
+                        <SystemTab
+                            aquarium={aquarium}
+                            updateSection={updateSection}
+                            saving={settingsSaving}
+                            onSave={handleSaveSystem}
+                        />
+                    )}
+                    {tab === "alerts" && (
+                        <AlertsTab
+                            aquarium={aquarium}
+                            updateSection={updateSection}
+                            saving={settingsSaving}
+                            onSave={handleSaveThresholds}
+                            browserNotifications={browserNotifications}
+                            onToggleBrowserNotifications={handleToggleBrowserNotifications}
+                        />
+                    )}
+                </fieldset>
+            </>
         );
-    }
+    };
 
     return (
         <div className="px-4 py-5">
-            <PageHeader title="Configuration" timezone={aquarium.systemConfig.timezone} />
+            <PageHeader title="Configuration" timezone={aquarium?.systemConfig?.timezone} />
             {(settingsStatus.error || settingsStatus.saved) && (
                 <div className="mb-4 space-y-2" aria-live="polite">
                     <ErrorAlert message={settingsStatus.error} />
@@ -608,32 +681,7 @@ export default function ConfigurationPage({ browserNotifications }) {
             </div>
 
             {tab === "profile" && <ProfileTab />}
-            {(tab === "system" || tab === "alerts") && !canControl && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    You have view-only access to this aquarium. Ask an owner or admin to change its settings.
-                </div>
-            )}
-            {/* Member hanya melihat: kontrol dimatikan (backend juga menolak dengan 403) */}
-            <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
-                {tab === "system" && (
-                    <SystemTab
-                        aquarium={aquarium}
-                        updateSection={updateSection}
-                        saving={settingsSaving}
-                        onSave={handleSaveSystem}
-                    />
-                )}
-                {tab === "alerts" && (
-                    <AlertsTab
-                        aquarium={aquarium}
-                        updateSection={updateSection}
-                        saving={settingsSaving}
-                        onSave={handleSaveThresholds}
-                        browserNotifications={browserNotifications}
-                        onToggleBrowserNotifications={handleToggleBrowserNotifications}
-                    />
-                )}
-            </fieldset>
+            {(tab === "system" || tab === "alerts") && renderAquariumTab()}
             {tab === "about" && <AboutTab />}
         </div>
     );

@@ -161,27 +161,30 @@ export const updateUserProfile = (userId, { fullName, photoUrl }) =>
 
 // ---------- Konfigurasi akuarium ----------
 
+// Semua fungsi per-akuarium bertipe async: id yang kosong menghasilkan promise yang ditolak (bisa ditangkap .catch),
+// bukan error sinkron yang menjatuhkan seluruh aplikasi di dalam useEffect
+
 export const getAquariums = () => apiFetch("/api/aquariums");
 
-export const getAquarium = aquariumId => getOrFallback(aquariumPath(aquariumId), null);
+export const getAquarium = async aquariumId => getOrFallback(aquariumPath(aquariumId), null);
 
-export const updateTemperatureConfig = (aquariumId, payload) =>
+export const updateTemperatureConfig = async (aquariumId, payload) =>
     send("PATCH", `${aquariumPath(aquariumId)}/temperature-config`, payload);
 
-export const updateLightingConfig = (aquariumId, payload) =>
+export const updateLightingConfig = async (aquariumId, payload) =>
     send("PATCH", `${aquariumPath(aquariumId)}/lighting-config`, payload);
 
-export const updateFeederConfig = (aquariumId, payload) =>
+export const updateFeederConfig = async (aquariumId, payload) =>
     send("PATCH", `${aquariumPath(aquariumId)}/feeder-config`, payload);
 
-export const updateSystemConfig = (aquariumId, payload) =>
+export const updateSystemConfig = async (aquariumId, payload) =>
     send("PATCH", `${aquariumPath(aquariumId)}/system-config`, payload);
 
-export const triggerFeeder = aquariumId => send("POST", `${aquariumPath(aquariumId)}/feeder/trigger`);
+export const triggerFeeder = async aquariumId => send("POST", `${aquariumPath(aquariumId)}/feeder/trigger`);
 
 // ---------- Telemetry ----------
 
-export const getTelemetry = (aquariumId, { startDate, endDate, limit = 40 } = {}) =>
+export const getTelemetry = async (aquariumId, { startDate, endDate, limit = 40 } = {}) =>
     getOrFallback(`${aquariumPath(aquariumId)}/telemetry${queryString({ startDate, endDate, limit })}`, {
         telemetryRecords: [],
         total: 0,
@@ -213,28 +216,31 @@ export function toChartData(telemetryRecords) {
 
 // ---------- Notifikasi ----------
 
-export const getNotifications = (aquariumId, { limit, readStatus } = {}) =>
+export const getNotifications = async (aquariumId, { limit, readStatus } = {}) =>
     getOrFallback(`${aquariumPath(aquariumId)}/notifications${queryString({ limit, readStatus })}`, {
         notificationRecords: [],
     });
 
-export const markNotificationRead = (aquariumId, notificationId) =>
+export const markNotificationRead = async (aquariumId, notificationId) =>
     send("PATCH", `${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}/read`);
 
-export const markAllNotificationsRead = aquariumId =>
+export const markAllNotificationsRead = async aquariumId =>
     send("PATCH", `${aquariumPath(aquariumId)}/notifications/read-all`);
 
-export const deleteNotification = (aquariumId, notificationId) =>
+export const deleteNotification = async (aquariumId, notificationId) =>
     send("DELETE", `${aquariumPath(aquariumId)}/notifications/${encodeURIComponent(notificationId)}`);
 
 // ---------- Anggota akuarium (owner dan admin) ----------
 
-export const getMembers = aquariumId => apiFetch(`${aquariumPath(aquariumId)}/members`);
+export const getMembers = async aquariumId => apiFetch(`${aquariumPath(aquariumId)}/members`);
 
-export const saveMember = (aquariumId, { email, role }) =>
-    send("PUT", `${aquariumPath(aquariumId)}/members`, { email, role });
+// User yang belum menjadi anggota akuarium ini dan boleh diberi peran
+export const getCandidates = async aquariumId => apiFetch(`${aquariumPath(aquariumId)}/candidates`);
 
-export const removeMember = (aquariumId, userId) =>
+export const saveMember = async (aquariumId, { userId, role }) =>
+    send("PUT", `${aquariumPath(aquariumId)}/members`, { userId, role });
+
+export const removeMember = async (aquariumId, userId) =>
     send("DELETE", `${aquariumPath(aquariumId)}/members/${encodeURIComponent(userId)}`);
 
 // ---------- Admin ----------
@@ -244,12 +250,18 @@ export const adminGetUsers = () => apiFetch("/api/admin/users");
 export const adminSetUserRole = (userId, role) =>
     send("PATCH", `/api/admin/users/${encodeURIComponent(userId)}`, { role });
 
-export const adminCreateAquarium = ({ name, id, ownerEmail }) =>
-    send("POST", "/api/admin/aquariums", { name, id, ownerEmail });
+export const adminGetAquariums = () => apiFetch("/api/admin/aquariums");
 
-export const adminGetDevices = aquariumId => apiFetch(`/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`);
+export const adminCreateAquarium = ({ name, id, ownerId }) =>
+    send("POST", "/api/admin/aquariums", { name, id, ownerId });
 
-export const adminCreateDevice = (aquariumId, name) =>
+export const adminUpdateAquarium = async (aquariumId, payload) =>
+    send("PATCH", `/api/admin/aquariums/${encodeURIComponent(aquariumId)}`, payload);
+
+export const adminGetDevices = async aquariumId =>
+    apiFetch(`/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`);
+
+export const adminCreateDevice = async (aquariumId, name) =>
     send("POST", `/api/admin/aquariums/${encodeURIComponent(aquariumId)}/devices`, { name });
 
 export const adminRevokeDevice = deviceId => send("DELETE", `/api/admin/devices/${encodeURIComponent(deviceId)}`);
