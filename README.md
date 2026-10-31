@@ -62,6 +62,7 @@ Sistem monitoring dan kontrol akuarium berbasis ESP32, dengan backend Node.js/Ex
 * [Skema Database](docs/backend/database-schema.md)
 * [Panduan UI/UX](docs/frontend/ui-ux-guide.md)
 * [Deployment Frontend](docs/frontend/deployment.md)
+* [Code Reference](docs/code-reference.md)
 
 ## Environment Variables
 
