@@ -1,26 +1,39 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { initialsOf } from "../utils/format";
-import { Bell, ChevronLeft, ChevronRight, Dashboard, Fish, History, Logout, Settings, User } from "./Icons";
+import { getInitials } from "../utils/displayFormatters";
+import {
+    BellIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    DashboardIcon,
+    FishIcon,
+    HistoryIcon,
+    LogoutIcon,
+    SettingsIcon,
+    UserIcon,
+} from "./Icons";
 
-const NAV = {
-    dashboard: { path: "/dashboard", label: "Dashboard", icon: Dashboard },
-    history: { path: "/history", label: "History", icon: History },
-    alerts: { path: "/notifications", label: "Alerts", icon: Bell },
-    config: { path: "/configuration", label: "Config", icon: Settings },
-    access: { path: "/access", label: "Access", icon: User },
+// nav items
+const NAV_ITEMS = {
+    dashboard: { path: "/dashboard", label: "Dashboard", icon: DashboardIcon },
+    history: { path: "/history", label: "History", icon: HistoryIcon },
+    alerts: { path: "/notifications", label: "Alerts", icon: BellIcon },
+    config: { path: "/configuration", label: "Config", icon: SettingsIcon },
+    access: { path: "/access", label: "Access", icon: UserIcon },
 };
-const NAVY = "#0d1b4b";
+// sidebar color
+const SIDEBAR_BACKGROUND_COLOR = "#0d1b4b";
 
-// Gaya lencana peran di header
-const ROLE_BADGE = {
+// role badge
+const HEADER_ROLE_BADGE_CLASSES = {
     admin: "bg-purple-500/40 text-purple-100",
     owner: "bg-blue-500/40 text-blue-100",
     member: "bg-sky-500/30 text-sky-100",
     viewer: "bg-white/10 text-slate-300",
 };
 
+// unread badge
 function UnreadBadge({ count }) {
     if (count <= 0) return null;
     return (
@@ -30,27 +43,37 @@ function UnreadBadge({ count }) {
     );
 }
 
-// Kerangka aplikasi: sidebar, header, navigasi bawah (mobile), dan toast
-export default function Layout({ children, notifCount = 0, systemNotice, onDismissSystemNotice }) {
-    const { user, signOut, aquariums, activeAquariumId, activeRole, selectAquarium, isViewer, canOpenAccess } =
-        useAuth();
+// app layout
+export default function AppLayout({ children, unreadNotificationCount = 0, successNotice, onDismissSuccessNotice }) {
+    const {
+        user,
+        signOut,
+        aquariums,
+        activeAquariumId,
+        activeAquariumRole,
+        selectActiveAquarium,
+        isViewer,
+        canOpenAccessPage,
+    } = useAuth();
     const navigate = useNavigate();
     const { pathname } = useLocation();
-    const [collapsed, setCollapsed] = useState(false);
+    // sidebar state
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     const displayName = user?.fullName || "Aquarist";
-    // Menu menurut peran: viewer hanya Dashboard dan Config; Access hanya admin dan owner; tanpa akuarium aktif
-    // tidak ada halaman data yang bisa dibuka
+    // visible nav
     const hasAquarium = Boolean(activeAquariumId);
-    const navItems = [
-        ...(hasAquarium ? [NAV.dashboard] : []),
-        ...(hasAquarium && !isViewer ? [NAV.history, NAV.alerts] : []),
-        NAV.config,
-        ...(canOpenAccess ? [NAV.access] : []),
+    const visibleNavItems = [
+        ...(hasAquarium ? [NAV_ITEMS.dashboard] : []),
+        ...(hasAquarium && !isViewer ? [NAV_ITEMS.history, NAV_ITEMS.alerts] : []),
+        NAV_ITEMS.config,
+        ...(canOpenAccessPage ? [NAV_ITEMS.access] : []),
     ];
-    const isActive = path => pathname === path || pathname.startsWith(`${path}/`);
-    const pageLabel = navItems.find(item => isActive(item.path))?.label || "Dashboard";
+    // active path
+    const isNavPathActive = path => pathname === path || pathname.startsWith(`${path}/`);
+    const pageLabel = visibleNavItems.find(item => isNavPathActive(item.path))?.label || "Dashboard";
 
+    // sign out
     const handleSignOut = async () => {
         try {
             await signOut();
@@ -63,32 +86,32 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
 
     return (
         <div className="min-h-screen bg-slate-100 flex">
-            {/* Sidebar desktop */}
+            {/* sidebar */}
             <aside
                 id="desktop-sidebar"
-                className={`hidden md:flex flex-col ${collapsed ? "w-16" : "w-64"} fixed top-0 left-0 bottom-0 flex-shrink-0 shadow-xl z-30 overflow-hidden transition-all duration-200`}
-                style={{ background: NAVY }}
+                className={`hidden md:flex flex-col ${isSidebarCollapsed ? "w-16" : "w-64"} fixed top-0 left-0 bottom-0 flex-shrink-0 shadow-xl z-30 overflow-hidden transition-all duration-200`}
+                style={{ background: SIDEBAR_BACKGROUND_COLOR }}
             >
                 <div className="flex-shrink-0 h-16" />
                 <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-                    {navItems.map(({ path, label, icon: Icon }) => (
+                    {visibleNavItems.map(({ path, label, icon: NavIcon }) => (
                         <button
                             key={path}
                             onClick={() => navigate(path)}
-                            title={collapsed ? label : undefined}
+                            title={isSidebarCollapsed ? label : undefined}
                             className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold transition-all ${
-                                collapsed ? "justify-center" : ""
+                                isSidebarCollapsed ? "justify-center" : ""
                             } ${
-                                isActive(path)
+                                isNavPathActive(path)
                                     ? "bg-blue-500 text-white shadow-md shadow-blue-500/30"
                                     : "text-blue-100/70 hover:bg-white/10 hover:text-white"
                             }`}
                         >
                             <span className="flex-shrink-0 relative">
-                                <Icon />
-                                {path === "/notifications" && <UnreadBadge count={notifCount} />}
+                                <NavIcon />
+                                {path === "/notifications" && <UnreadBadge count={unreadNotificationCount} />}
                             </span>
-                            {!collapsed && <span className="truncate">{label}</span>}
+                            {!isSidebarCollapsed && <span className="truncate">{label}</span>}
                         </button>
                     ))}
                 </nav>
@@ -96,43 +119,43 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                 <div className="px-3 py-4 border-t border-white/10 flex-shrink-0">
                     <button
                         onClick={handleSignOut}
-                        title={collapsed ? "Sign Out" : undefined}
+                        title={isSidebarCollapsed ? "Sign Out" : undefined}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-all ${
-                            collapsed ? "justify-center px-3" : ""
+                            isSidebarCollapsed ? "justify-center px-3" : ""
                         }`}
                     >
-                        <Logout />
-                        {!collapsed && <span>Sign Out</span>}
+                        <LogoutIcon />
+                        {!isSidebarCollapsed && <span>Sign Out</span>}
                     </button>
                 </div>
             </aside>
 
             <button
                 type="button"
-                onClick={() => setCollapsed(current => !current)}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                aria-expanded={!collapsed}
+                onClick={() => setIsSidebarCollapsed(current => !current)}
+                aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-expanded={!isSidebarCollapsed}
                 aria-controls="desktop-sidebar"
-                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                 className={`hidden md:flex fixed top-20 ${
-                    collapsed ? "left-16" : "left-64"
+                    isSidebarCollapsed ? "left-16" : "left-64"
                 } z-40 h-10 w-6 items-center justify-center rounded-r-lg border border-l-0 border-white/20 bg-[#0d1b4b] text-white shadow-md transition-all duration-200 hover:bg-blue-700`}
             >
-                {collapsed ? <ChevronRight /> : <ChevronLeft />}
+                {isSidebarCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
             </button>
 
             <div
-                className={`flex-1 flex flex-col min-h-screen min-w-0 ${collapsed ? "md:ml-16" : "md:ml-64"} transition-all duration-200`}
+                className={`flex-1 flex flex-col min-h-screen min-w-0 ${isSidebarCollapsed ? "md:ml-16" : "md:ml-64"} transition-all duration-200`}
             >
-                {/* Header: logo, judul halaman, profil */}
+                {/* header */}
                 <header
                     className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 md:px-6 h-14 md:h-16 shadow-sm overflow-hidden"
-                    style={{ background: NAVY }}
+                    style={{ background: SIDEBAR_BACKGROUND_COLOR }}
                 >
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2 text-white">
-                            <Fish />
-                            {!collapsed && (
+                            <FishIcon />
+                            {!isSidebarCollapsed && (
                                 <div className="leading-none">
                                     <div className="text-white text-sm font-bold tracking-widest leading-none">
                                         SMART
@@ -155,7 +178,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                                 {aquariums.length > 1 ? (
                                     <select
                                         value={activeAquariumId || ""}
-                                        onChange={event => selectAquarium(event.target.value)}
+                                        onChange={event => selectActiveAquarium(event.target.value)}
                                         aria-label="Select aquarium"
                                         className="max-w-[140px] rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-xs font-semibold text-white outline-none"
                                     >
@@ -170,11 +193,11 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                                         {aquariums[0].name}
                                     </span>
                                 )}
-                                {activeRole && (
+                                {activeAquariumRole && (
                                     <span
-                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ROLE_BADGE[activeRole] || ROLE_BADGE.viewer}`}
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${HEADER_ROLE_BADGE_CLASSES[activeAquariumRole] || HEADER_ROLE_BADGE_CLASSES.viewer}`}
                                     >
-                                        {activeRole}
+                                        {activeAquariumRole}
                                     </span>
                                 )}
                             </div>
@@ -191,7 +214,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                                 />
                             ) : (
                                 <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold border-2 border-blue-400">
-                                    {initialsOf(user?.fullName, "SA")}
+                                    {getInitials(user?.fullName, "SA")}
                                 </div>
                             )}
                             <div className="hidden md:block text-left min-w-0">
@@ -206,6 +229,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                     </div>
                 </header>
 
+                {/* content */}
                 <main
                     className="flex-1 overflow-y-auto scroll-area md:p-6 mt-14 md:mt-16"
                     style={{ paddingBottom: "calc(56px + env(safe-area-inset-bottom, 0px))" }}
@@ -214,7 +238,8 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                 </main>
             </div>
 
-            {systemNotice && (
+            {/* success notice */}
+            {successNotice && (
                 <div
                     role="status"
                     aria-live="polite"
@@ -224,10 +249,10 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                         <span className="flex-shrink-0" aria-hidden="true">
                             ✅
                         </span>
-                        <p className="flex-1">{systemNotice}</p>
+                        <p className="flex-1">{successNotice}</p>
                         <button
                             type="button"
-                            onClick={onDismissSystemNotice}
+                            onClick={onDismissSuccessNotice}
                             aria-label="Dismiss notification"
                             className="-mr-1 -mt-1 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-green-700 hover:bg-green-100"
                         >
@@ -237,7 +262,7 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                 </div>
             )}
 
-            {/* Navigasi bawah (mobile) */}
+            {/* mobile nav */}
             <nav
                 className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-slate-200 bg-white md:hidden"
                 style={{
@@ -245,22 +270,22 @@ export default function Layout({ children, notifCount = 0, systemNotice, onDismi
                     paddingBottom: "env(safe-area-inset-bottom, 0px)",
                 }}
             >
-                {navItems.map(({ path, label, icon: Icon }) => {
-                    const active = isActive(path);
+                {visibleNavItems.map(({ path, label, icon: NavIcon }) => {
+                    const isActive = isNavPathActive(path);
                     return (
                         <button
                             key={path}
                             onClick={() => navigate(path)}
                             className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 pt-2 transition-colors ${
-                                active ? "text-blue-600" : "text-slate-400 hover:text-slate-600"
+                                isActive ? "text-blue-600" : "text-slate-400 hover:text-slate-600"
                             }`}
                         >
                             <span className="relative flex-shrink-0">
-                                <Icon />
-                                {path === "/notifications" && <UnreadBadge count={notifCount} />}
+                                <NavIcon />
+                                {path === "/notifications" && <UnreadBadge count={unreadNotificationCount} />}
                             </span>
                             <span className="text-[10px] font-semibold leading-none">{label}</span>
-                            {active && <span className="absolute top-0 w-8 h-0.5 bg-blue-500 rounded-full" />}
+                            {isActive && <span className="absolute top-0 w-8 h-0.5 bg-blue-500 rounded-full" />}
                         </button>
                     );
                 })}

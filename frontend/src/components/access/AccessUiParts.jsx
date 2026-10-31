@@ -1,17 +1,20 @@
 import { useState } from "react";
-import { ErrorAlert, SuccessAlert } from "../ui";
+import { ErrorAlert, SuccessAlert } from "../UiKit";
 
-export const inputClass =
+// input style
+export const INPUT_CLASS_NAME =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 disabled:bg-slate-50 disabled:text-slate-400";
 
-// Menjalankan aksi API dengan status error/sukses yang seragam
-export function useAction() {
+// api action
+export function useApiAction() {
+    // state
     const [status, setStatus] = useState({ error: "", saved: "" });
-    const [busy, setBusy] = useState(false);
+    const [isBusy, setIsBusy] = useState(false);
 
-    const run = async (action, successMessage) => {
+    // run action
+    const runApiAction = async (action, successMessage) => {
         setStatus({ error: "", saved: "" });
-        setBusy(true);
+        setIsBusy(true);
         try {
             const result = await action();
             setStatus({ error: "", saved: successMessage });
@@ -20,15 +23,15 @@ export function useAction() {
             setStatus({ error: error.message || "Request failed.", saved: "" });
             return false;
         } finally {
-            setBusy(false);
+            setIsBusy(false);
         }
     };
 
-    return { status, busy, run, clear: () => setStatus({ error: "", saved: "" }) };
+    return { status, isBusy, runApiAction, clearStatus: () => setStatus({ error: "", saved: "" }) };
 }
 
-// Kartu bagian dengan judul, keterangan singkat, dan area aksi di kanan atas
-export function Section({ title, description, action, children, className = "" }) {
+// section card
+export function SectionCard({ title, description, headerAction, children, className = "" }) {
     return (
         <section className={`rounded-2xl border border-slate-200 bg-white ${className}`}>
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
@@ -36,13 +39,14 @@ export function Section({ title, description, action, children, className = "" }
                     <h2 className="text-sm font-bold text-slate-800">{title}</h2>
                     {description && <p className="mt-0.5 text-xs text-slate-400">{description}</p>}
                 </div>
-                {action && <div className="flex-shrink-0">{action}</div>}
+                {headerAction && <div className="flex-shrink-0">{headerAction}</div>}
             </div>
             <div className="space-y-3 p-4">{children}</div>
         </section>
     );
 }
 
+// status messages
 export function StatusMessages({ status, extraError }) {
     return (
         <>
@@ -52,7 +56,7 @@ export function StatusMessages({ status, extraError }) {
     );
 }
 
-// Baris orang: avatar inisial, nama, email, dan area kanan (badge atau tombol)
+// person row
 export function PersonRow({ person, children }) {
     const name = person.fullName || person.email || person.userId;
     return (
@@ -71,10 +75,12 @@ export function PersonRow({ person, children }) {
     );
 }
 
+// empty state
 export function EmptyState({ children }) {
     return <p className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">{children}</p>;
 }
 
+// small button
 export function SmallButton({ children, onClick, disabled, tone = "default", type = "button" }) {
     const tones = {
         default: "border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600",

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import Layout from "./components/Layout";
+import AppLayout from "./components/AppLayout";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import useBrowserNotifications from "./hooks/useBrowserNotifications";
-import useUnreadCount from "./hooks/useUnreadCount";
+import useUnreadNotificationCount from "./hooks/useUnreadNotificationCount";
 import AccessPage from "./pages/Access";
 import ConfigurationPage from "./pages/Configuration";
 import DashboardPage from "./pages/Dashboard";
@@ -12,8 +12,10 @@ import LoginPage from "./pages/Login";
 import NotificationsPage from "./pages/Notifications";
 import RegisterPage from "./pages/Register";
 
+// notice duration
 const NOTICE_DURATION_MS = 5000;
 
+// protected route
 function ProtectedRoute({ children }) {
     const { isAuthenticated, isAuthLoading } = useAuth();
     if (isAuthLoading) {
@@ -26,7 +28,7 @@ function ProtectedRoute({ children }) {
     return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
-// Tidak ada akuarium yang bisa ditampilkan untuk akun ini (belum ada yang dibuat, atau belum diberi akses)
+// no aquarium
 function NoAquariumNotice() {
     const { signOut } = useAuth();
     return (
@@ -43,29 +45,30 @@ function NoAquariumNotice() {
     );
 }
 
+// app routes
 function AppRoutes() {
-    const { user, activeAquariumId, isAdmin, isViewer, canOpenAccess } = useAuth();
+    const { user, activeAquariumId, isAdmin, isViewer, canOpenAccessPage } = useAuth();
     const userId = user?.id || user?.userId;
-    // Viewer tidak punya halaman Alerts, jadi tidak perlu menghitung atau memeriksa notifikasi (hemat dan tanpa 403)
+    // notification state
     const alertsAquariumId = isViewer ? null : activeAquariumId;
-    const [notifCount, setNotifCount] = useUnreadCount(userId, alertsAquariumId);
+    const [unreadNotificationCount, setUnreadNotificationCount] = useUnreadNotificationCount(userId, alertsAquariumId);
     const browserNotifications = useBrowserNotifications(userId, alertsAquariumId);
-    const [systemNotice, setSystemNotice] = useState("");
+    const [successNotice, setSystemNotice] = useState("");
 
-    // Toast sukses setelah aksi, hilang otomatis setelah 5 detik
+    // auto dismiss
     useEffect(() => {
-        if (!systemNotice) return undefined;
+        if (!successNotice) return undefined;
         const timeoutId = window.setTimeout(() => setSystemNotice(""), NOTICE_DURATION_MS);
         return () => window.clearTimeout(timeoutId);
-    }, [systemNotice]);
+    }, [successNotice]);
 
-    // Aksi membuat notifikasi di server, jadi badge unread ikut di-refresh
-    const notifySystemChange = message => {
+    // show notice
+    const showSuccessNotice = message => {
         setSystemNotice(message);
         window.dispatchEvent(new Event("sa:notifications-changed"));
     };
 
-    const dashboard = <DashboardPage onSystemChange={notifySystemChange} />;
+    const dashboardElement = <DashboardPage onSuccessNotice={showSuccessNotice} />;
 
     return (
         <Routes>
@@ -76,24 +79,22 @@ function AppRoutes() {
                 path="/*"
                 element={
                     <ProtectedRoute>
-                        <Layout
-                            notifCount={notifCount}
-                            systemNotice={systemNotice}
-                            onDismissSystemNotice={() => setSystemNotice("")}
+                        <AppLayout
+                            unreadNotificationCount={unreadNotificationCount}
+                            successNotice={successNotice}
+                            onDismissSuccessNotice={() => setSystemNotice("")}
                         >
-                            {/* key: halaman dimuat ulang dari awal saat akuarium aktif diganti */}
+                            {/* page routes */}
                             <Routes key={activeAquariumId}>
-                                {/* Access hanya untuk admin dan owner */}
-                                {canOpenAccess && <Route path="/access" element={<AccessPage />} />}
+                                {canOpenAccessPage && <Route path="/access" element={<AccessPage />} />}
                                 <Route
                                     path="/configuration"
                                     element={<ConfigurationPage browserNotifications={browserNotifications} />}
                                 />
                                 {activeAquariumId ? (
                                     <>
-                                        <Route path="/dashboard" element={dashboard} />
-                                        <Route path="/dashboard/:tab" element={dashboard} />
-                                        {/* Viewer hanya melihat monitoring: tanpa History dan Alerts */}
+                                        <Route path="/dashboard" element={dashboardElement} />
+                                        <Route path="/dashboard/:tab" element={dashboardElement} />
                                         <Route
                                             path="/history"
                                             element={
@@ -107,8 +108,8 @@ function AppRoutes() {
                                                     <Navigate to="/dashboard" replace />
                                                 ) : (
                                                     <NotificationsPage
-                                                        onCountChange={setNotifCount}
-                                                        onSystemChange={notifySystemChange}
+                                                        onUnreadCountChange={setUnreadNotificationCount}
+                                                        onSuccessNotice={showSuccessNotice}
                                                     />
                                                 )
                                             }
@@ -116,11 +117,10 @@ function AppRoutes() {
                                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                                     </>
                                 ) : (
-                                    // Tanpa akuarium aktif tidak ada halaman yang memanggil API akuarium
                                     <Route
                                         path="*"
                                         element={
-                                            isAdmin || canOpenAccess ? (
+                                            isAdmin || canOpenAccessPage ? (
                                                 <Navigate to="/access" replace />
                                             ) : (
                                                 <NoAquariumNotice />
@@ -129,7 +129,7 @@ function AppRoutes() {
                                     />
                                 )}
                             </Routes>
-                        </Layout>
+                        </AppLayout>
                     </ProtectedRoute>
                 }
             />
@@ -137,6 +137,7 @@ function AppRoutes() {
     );
 }
 
+// app root
 export default function App() {
     return (
         <BrowserRouter>

@@ -1,28 +1,38 @@
 import { Router } from "express";
-import { configSections, getAquarium } from "../config/aquarium.js";
-import { query, transaction } from "../config/db.js";
-import { requireDeviceKey, requireOwnAquarium } from "../middleware/auth.js";
-import { configVersion, waitForConfigChange } from "../utils/config-events.js";
-import { offlineThresholdSeconds, recordTelemetry } from "../utils/device-status.js";
-import { addAquariumNotification } from "../utils/notifications.js";
+import { extractConfigSections, getAquariumById } from "../config/aquarium-repository.js";
+import { queryDatabase, runInTransaction } from "../config/database.js";
+import { requireDeviceKey, requireDeviceOwnsAquarium } from "../middleware/auth.js";
+import { getConfigVersion, waitForConfigChange } from "../utils/config-change-events.js";
+import { offlineThresholdSeconds, recordTelemetryReceived } from "../utils/device-watchdog.js";
+import { addAquariumNotification } from "../utils/notification-records.js";
 
-const router = Router();
-// Kunci perangkat hanya berlaku untuk akuarium yang terdaftar bersamanya
-router.use(requireDeviceKey);
-router.use("/:aquariumId", requireOwnAquarium);
+// router hardware
+const hardwareRouter = Router();
+hardwareRouter.use(requireDeviceKey);
+hardwareRouter.use("/:aquariumId", requireDeviceOwnsAquarium);
 
-const NOT_FOUND = { message: "Aquarium was not found." };
+// not found
+const AQUARIUM_NOT_FOUND_RESPONSE = { message: "Aquarium was not found." };
+
+// hari lampu
 const LIGHTING_USAGE_DAYS = 7;
+// interval riwayat
 const HISTORY_INTERVAL_SECONDS = 60;
-const LIVE_MEASURED_MAX_AGE_MS = 5 * 60_000; // measuredAt telemetry biasa: hanya dipercaya jika dekat dengan waktu server
-const BACKLOG_MEASURED_MAX_AGE_MS = 7 * 24 * 3_600_000; // Data antrean dari perangkat yang lama offline
+// umur live
+const LIVE_MEASURED_MAX_AGE_MS = 5 * 60_000;
+// umur backlog
+const BACKLOG_MEASURED_MAX_AGE_MS = 7 * 24 * 3_600_000;
+// toleransi waktu
 const MEASURED_FUTURE_TOLERANCE_MS = 5 * 60_000;
+// maks backlog
 const MAX_BACKLOG_READINGS = 50;
+// umur boot
 const BOOT_REPORT_MAX_AGE_MS = 24 * 3_600_000;
-const HISTORY_SLACK_SECONDS = 5; // Jeda antar-telemetry tidak presisi; tanpa ini riwayat bisa lompat ke siklus berikutnya
+// slack riwayat
+const HISTORY_SLACK_SECONDS = 5;
 
-// Penyebab restart abnormal yang dilaporkan firmware (nilai lain diabaikan) beserta penjelasan untuk pengguna
-const BOOT_REASONS = {
+// alasan restart
+const BOOT_REASON_MESSAGES = {
     "task watchdog": "The control program stopped responding and was restarted by the watchdog.",
     "interrupt watchdog": "The control program stopped responding and was restarted by the watchdog.",
     "other watchdog": "The control program stopped responding and was restarted by the watchdog.",
@@ -31,13 +41,13 @@ const BOOT_REASONS = {
     "network task stalled": "The network connection stopped responding and the device restarted itself.",
 };
 
-const isOnOff = value => value === "ON" || value === "OFF";
-const isFeederStatus = value => value === "Idle" || value === "Active";
+// status onoff
+const isOnOffState = value => value === "ON" || value === "OFF";
+// status pakan
+const isFeederStatusValue = value => value === "Idle" || value === "Active";
 
-// ---------- Fungsi bantu ----------
-
-// Tanggal YYYY-MM-DD sesuai timezone akuarium (fallback UTC)
-function dayKey(date, timezone) {
+// tanggal lokal
+function formatLocalDay(date, timezone) {
     try {
         return new Intl.DateTimeFormat("en-CA", {
             timeZone: timezone,
@@ -50,11 +60,12 @@ function dayKey(date, timezone) {
     }
 }
 
-const isOutOfRange = (temp, min, max) => (Number.isFinite(min) && temp < min) || (Number.isFinite(max) && temp > max);
+// suhu ekstrem
+const isTempOutOfRange = (temp, minTemp, maxTemp) =>
+    (Number.isFinite(minTemp) && temp < minTemp) || (Number.isFinite(maxTemp) && temp > maxTemp);
 
-// Waktu pengukuran dari perangkat (detik sejak 1970, UTC dari NTP). Perangkat tanpa NTP tidak mengirimnya.
-// Nilai di luar jendela yang wajar (jam salah) diabaikan, dan server memakai waktu terima
-function parseMeasuredAt(value, now, maxAgeMs) {
+// waktu ukur
+function parseDeviceTimestamp(value, now, maxAgeMs) {
     if (!Number.isInteger(value)) return null;
     const milliseconds = value * 1000;
     if (milliseconds > now.getTime() + MEASURED_FUTURE_TOLERANCE_MS) return null;
@@ -62,26 +73,26 @@ function parseMeasuredAt(value, now, maxAgeMs) {
     return new Date(milliseconds);
 }
 
-// Tambahan pemakaian lampu sejak telemetry sebelumnya: durasi dihitung ke status LED sebelumnya.
-// Jeda > 3x poll interval (min. 120 detik) dianggap offline dan tidak dihitung
-function lightingUsageDelta(state, now) {
-    const previousLed = state.led_status;
-    const elapsedSeconds = state.last_updated ? (now.getTime() - state.last_updated.getTime()) / 1000 : 0;
-    const maxGapSeconds = offlineThresholdSeconds(state.system_config?.pollFrequency);
-    if (!isOnOff(previousLed) || elapsedSeconds <= 0 || elapsedSeconds > maxGapSeconds) return null;
+// tambah lampu
+function calculateLightingUsageDelta(deviceStateRow, now) {
+    const previousLed = deviceStateRow.led_status;
+    const elapsedSeconds = deviceStateRow.last_updated
+        ? (now.getTime() - deviceStateRow.last_updated.getTime()) / 1000
+        : 0;
+    const maxGapSeconds = offlineThresholdSeconds(deviceStateRow.system_config?.pollFrequency);
+    if (!isOnOffState(previousLed) || elapsedSeconds <= 0 || elapsedSeconds > maxGapSeconds) return null;
     return {
-        day: dayKey(now, state.system_config?.timezone),
+        day: formatLocalDay(now, deviceStateRow.system_config?.timezone),
         column: previousLed === "ON" ? "on_seconds" : "off_seconds",
         seconds: Math.round(elapsedSeconds * 10) / 10,
     };
 }
 
-// ---------- Route ----------
-
-router.post("/:aquariumId/telemetry", async (req, res) => {
+// terima telemetry
+hardwareRouter.post("/:aquariumId/telemetry", async (req, res) => {
     const { currentTemp, heaterStatus, ledStatus, feederStatus } = req.body;
     const event = typeof req.body.event === "string" ? req.body.event.trim().slice(0, 160) : "";
-    // Laporan sensor gagal: tanpa currentTemp tetapi dengan event (alasannya)
+    // sensor gagal
     const sensorFault = (currentTemp === undefined || currentTemp === null) && event !== "";
     if (!sensorFault && (!Number.isFinite(currentTemp) || currentTemp < -10 || currentTemp > 60)) {
         return res.status(400).json({
@@ -89,22 +100,22 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
                 "currentTemp must be a finite Celsius value between -10 and 60 (omit it only to report a sensor fault with an event).",
         });
     }
-    if (!isOnOff(heaterStatus) || !isOnOff(ledStatus) || !isFeederStatus(feederStatus)) {
+    if (!isOnOffState(heaterStatus) || !isOnOffState(ledStatus) || !isFeederStatusValue(feederStatus)) {
         return res.status(400).json({ message: "Device statuses are invalid." });
     }
 
     const aquariumId = req.params.aquariumId;
     const now = new Date();
-    const measuredAt = parseMeasuredAt(req.body.measuredAt, now, LIVE_MEASURED_MAX_AGE_MS);
-    // Laporan restart abnormal: dikirim sekali oleh firmware pada telemetry pertama setelah menyala
+    const measuredAt = parseDeviceTimestamp(req.body.measuredAt, now, LIVE_MEASURED_MAX_AGE_MS);
+    // laporan restart
     const bootReason =
-        typeof req.body.bootReason === "string" && Object.hasOwn(BOOT_REASONS, req.body.bootReason)
+        typeof req.body.bootReason === "string" && Object.hasOwn(BOOT_REASON_MESSAGES, req.body.bootReason)
             ? req.body.bootReason
             : null;
-    const bootedAt = parseMeasuredAt(req.body.bootedAt, now, BOOT_REPORT_MAX_AGE_MS);
+    const bootedAt = parseDeviceTimestamp(req.body.bootedAt, now, BOOT_REPORT_MAX_AGE_MS);
 
-    // Satu transaksi dengan baris device_state terkunci: telemetry dari perangkat yang sama tidak saling menimpa
-    const pollFrequency = await transaction(async client => {
+    // transaksi telemetry
+    const pollFrequency = await runInTransaction(async client => {
         const { rows } = await client.query(
             `select a.temp_config, a.system_config,
                     ds.current_temp, ds.heater_status, ds.led_status, ds.feeder_status, ds.last_updated,
@@ -114,28 +125,30 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
              for update of ds`,
             [aquariumId],
         );
-        const state = rows[0];
-        if (!state) return null;
+        const deviceStateRow = rows[0];
+        if (!deviceStateRow) return null;
 
-        const cameBackOnline = state.offline_notified;
-        const sensorErrorNotified = state.sensor_error_notified;
+        const cameBackOnline = deviceStateRow.offline_notified;
+        const sensorErrorNotified = deviceStateRow.sensor_error_notified;
 
-        // Riwayat dicatat saat status berubah, suhu baru keluar batas, atau tiap HISTORY_INTERVAL_SECONDS.
-        // device_state tetap diperbarui di setiap telemetry
-        const { minTempThreshold: min, maxTempThreshold: max } = state.temp_config || {};
-        const wasOutOfRange = Number.isFinite(state.current_temp) && isOutOfRange(state.current_temp, min, max);
-        const crossedLimit = !sensorFault && isOutOfRange(currentTemp, min, max) && !wasOutOfRange;
+        // simpan riwayat
+        const { minTempThreshold, maxTempThreshold } = deviceStateRow.temp_config || {};
+        const wasOutOfRange =
+            Number.isFinite(deviceStateRow.current_temp) &&
+            isTempOutOfRange(deviceStateRow.current_temp, minTempThreshold, maxTempThreshold);
+        const crossedLimit =
+            !sensorFault && isTempOutOfRange(currentTemp, minTempThreshold, maxTempThreshold) && !wasOutOfRange;
         const statusChanged =
-            state.heater_status !== heaterStatus ||
-            state.led_status !== ledStatus ||
-            state.feeder_status !== feederStatus;
+            deviceStateRow.heater_status !== heaterStatus ||
+            deviceStateRow.led_status !== ledStatus ||
+            deviceStateRow.feeder_status !== feederStatus;
         const historyDue =
-            !state.last_history_at ||
-            (now.getTime() - state.last_history_at.getTime()) / 1000 >=
+            !deviceStateRow.last_history_at ||
+            (now.getTime() - deviceStateRow.last_history_at.getTime()) / 1000 >=
                 HISTORY_INTERVAL_SECONDS - HISTORY_SLACK_SECONDS;
-        const saveHistory = !sensorFault && (statusChanged || crossedLimit || historyDue);
+        const shouldSaveHistory = !sensorFault && (statusChanged || crossedLimit || historyDue);
 
-        const usage = lightingUsageDelta(state, now);
+        const lightingUsage = calculateLightingUsageDelta(deviceStateRow, now);
 
         await client.query(
             `update device_state set
@@ -150,28 +163,27 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
                 ledStatus,
                 feederStatus,
                 sensorFault,
-                saveHistory,
+                shouldSaveHistory,
             ],
         );
 
-        if (usage) {
-            // Kolom dari daftar tetap di lightingUsageDelta, bukan dari input
+        if (lightingUsage) {
+            // kolom tetap
             await client.query(
-                `insert into lighting_usage (aquarium_id, day, ${usage.column}) values ($1, $2, $3)
+                `insert into lighting_usage (aquarium_id, day, ${lightingUsage.column}) values ($1, $2, $3)
                  on conflict (aquarium_id, day) do update
-                 set ${usage.column} = lighting_usage.${usage.column} + excluded.${usage.column}`,
-                [aquariumId, usage.day, usage.seconds],
+                 set ${lightingUsage.column} = lighting_usage.${lightingUsage.column} + excluded.${lightingUsage.column}`,
+                [aquariumId, lightingUsage.day, lightingUsage.seconds],
             );
-            // Simpan hanya LIGHTING_USAGE_DAYS hari terakhir
+            // retensi 7hari
             await client.query("delete from lighting_usage where aquarium_id = $1 and day < $2::date - $3::int", [
                 aquariumId,
-                usage.day,
+                lightingUsage.day,
                 LIGHTING_USAGE_DAYS - 1,
             ]);
         }
 
-        if (saveHistory) {
-            // Dengan measuredAt, pengiriman ulang pembacaan yang sama tidak menambah baris (unik per akuarium dan waktu)
+        if (shouldSaveHistory) {
             await client.query(
                 `insert into telemetry_history (aquarium_id, recorded_at, temp, heater_state, led_state, feeder_state, event)
                  values ($1, coalesce($2, now()), $3, $4, $5, $6, $7)
@@ -188,71 +200,67 @@ router.post("/:aquariumId/telemetry", async (req, res) => {
             );
         }
 
-        const notify = notification =>
+        // notifikasi hardware
+        const notifyAquarium = notification =>
             addAquariumNotification(client, { aquariumId, actorName: "Aquarium hardware", ...notification });
 
         if (bootReason) {
-            await notify({
+            await notifyAquarium({
                 title: "Device Restarted",
-                message: `${BOOT_REASONS[bootReason]} Heater and lamp were switched off during the restart and resumed with the last saved settings.`,
+                message: `${BOOT_REASON_MESSAGES[bootReason]} Heater and lamp were switched off during the restart and resumed with the last saved settings.`,
                 type: "alert",
-                // Tetap untuk satu kali menyala, jadi laporan yang dikirim ulang tidak membuat notifikasi ganda
                 dedupeKey: bootedAt ? `boot-${Math.floor(bootedAt.getTime() / 1000)}` : null,
             });
         }
 
         if (sensorFault) {
-            // Notifikasi hanya sekali sampai pembacaan sensor normal kembali
             if (!sensorErrorNotified) {
-                await notify({
+                await notifyAquarium({
                     title: "Sensor Error",
                     message: `The temperature sensor is not returning a valid reading (${event}). Check the sensor wiring.`,
                     type: "alert",
                 });
             }
         } else if (crossedLimit) {
-            // Alert hanya saat suhu baru keluar dari batas, bukan di setiap pembacaan
-            const isLow = currentTemp < min;
-            await notify({
+            const isBelowMin = currentTemp < minTempThreshold;
+            await notifyAquarium({
                 title: "Temperature Alert",
-                message: `Water temperature is ${isLow ? "below" : "above"} the configured threshold of ${isLow ? min : max}°C (${currentTemp}°C).`,
+                message: `Water temperature is ${isBelowMin ? "below" : "above"} the configured threshold of ${isBelowMin ? minTempThreshold : maxTempThreshold}°C (${currentTemp}°C).`,
                 type: "alert",
             });
         }
 
         if (cameBackOnline) {
-            await notify({
+            await notifyAquarium({
                 title: "Device Back Online",
                 message: "The aquarium hardware is sending data again.",
                 type: "success",
             });
         }
 
-        return state.system_config?.pollFrequency;
+        return deviceStateRow.system_config?.pollFrequency;
     });
 
-    if (pollFrequency === null) return res.status(404).json(NOT_FOUND);
-    recordTelemetry(aquariumId, pollFrequency);
+    if (pollFrequency === null) return res.status(404).json(AQUARIUM_NOT_FOUND_RESPONSE);
+    recordTelemetryReceived(aquariumId, pollFrequency);
     return res.status(201).json({ status: "received", timestamp: now.toISOString() });
 });
 
-// Pembacaan lama yang tertahan di perangkat saat Wi-Fi atau backend mati (paling lama 7 hari). Hanya menambah
-// riwayat: status realtime, notifikasi, dan pemakaian lampu tidak disentuh karena sudah tidak aktual.
-// Pembacaan yang tidak valid dilewati; perangkat menghapus paketnya begitu dibalas 201
-router.post("/:aquariumId/telemetry/backlog", async (req, res) => {
+// telemetry antrean
+hardwareRouter.post("/:aquariumId/telemetry/backlog", async (req, res) => {
     const { readings } = req.body;
     if (!Array.isArray(readings) || readings.length === 0 || readings.length > MAX_BACKLOG_READINGS) {
         return res.status(400).json({ message: `readings must be a list of 1 to ${MAX_BACKLOG_READINGS} items.` });
     }
 
-    const aquarium = await getAquarium(req.params.aquariumId);
-    if (!aquarium) return res.status(404).json(NOT_FOUND);
+    const aquarium = await getAquariumById(req.params.aquariumId);
+    if (!aquarium) return res.status(404).json(AQUARIUM_NOT_FOUND_RESPONSE);
 
     const now = new Date();
-    const valid = readings
+    const validReadings = readings
         .map(reading => ({
             reading: reading || {},
-            measuredAt: parseMeasuredAt(reading?.measuredAt, now, BACKLOG_MEASURED_MAX_AGE_MS),
+            measuredAt: parseDeviceTimestamp(reading?.measuredAt, now, BACKLOG_MEASURED_MAX_AGE_MS),
         }))
         .filter(({ reading, measuredAt }) => {
             const { currentTemp, heaterStatus, ledStatus, feederStatus } = reading;
@@ -261,57 +269,57 @@ router.post("/:aquariumId/telemetry/backlog", async (req, res) => {
                 Number.isFinite(currentTemp) &&
                 currentTemp >= -10 &&
                 currentTemp <= 60 &&
-                isOnOff(heaterStatus) &&
-                isOnOff(ledStatus) &&
-                isFeederStatus(feederStatus)
+                isOnOffState(heaterStatus) &&
+                isOnOffState(ledStatus) &&
+                isFeederStatusValue(feederStatus)
             );
         });
 
-    if (valid.length > 0) {
-        const events = valid.map(({ reading }) =>
+    if (validReadings.length > 0) {
+        const readingEvents = validReadings.map(({ reading }) =>
             typeof reading.event === "string" && reading.event.trim()
                 ? reading.event.trim().slice(0, 160)
                 : "Telemetry update",
         );
-        // Sekali insert untuk semua pembacaan; yang waktunya sudah ada dilewati (pengiriman ulang)
-        await query(
+        // insert massal
+        await queryDatabase(
             `insert into telemetry_history (aquarium_id, recorded_at, temp, heater_state, led_state, feeder_state, event)
              select $1, * from unnest($2::timestamptz[], $3::numeric[], $4::text[], $5::text[], $6::text[], $7::text[])
              on conflict (aquarium_id, recorded_at) do nothing`,
             [
                 aquarium.id,
-                valid.map(({ measuredAt }) => measuredAt),
-                valid.map(({ reading }) => reading.currentTemp),
-                valid.map(({ reading }) => reading.heaterStatus),
-                valid.map(({ reading }) => reading.ledStatus),
-                valid.map(({ reading }) => reading.feederStatus),
-                events,
+                validReadings.map(({ measuredAt }) => measuredAt),
+                validReadings.map(({ reading }) => reading.currentTemp),
+                validReadings.map(({ reading }) => reading.heaterStatus),
+                validReadings.map(({ reading }) => reading.ledStatus),
+                validReadings.map(({ reading }) => reading.feederStatus),
+                readingEvents,
             ],
         );
     }
-    return res.status(201).json({ accepted: valid.length, skipped: readings.length - valid.length });
+    return res.status(201).json({ accepted: validReadings.length, skipped: readings.length - validReadings.length });
 });
 
-// Long polling: dengan ?wait=<detik>&v=<configVersion> permintaan ditahan sampai config berubah (atau waktu habis),
-// lalu dibalas penuh. Tanpa parameter tersebut dibalas langsung seperti biasa (firmware lama tetap jalan)
+// batas polling
 const MAX_CONFIG_WAIT_SECONDS = 25;
 
-router.get("/:aquariumId/config", async (req, res) => {
+// config perangkat
+hardwareRouter.get("/:aquariumId/config", async (req, res) => {
     const { aquariumId } = req.params;
     const waitSeconds = Math.min(Math.max(Number(req.query.wait) || 0, 0), MAX_CONFIG_WAIT_SECONDS);
     const knownVersion = typeof req.query.v === "string" ? req.query.v : "";
     if (waitSeconds > 0 && knownVersion) {
         await waitForConfigChange(aquariumId, knownVersion, waitSeconds * 1000, res);
-        if (res.destroyed) return undefined; // Perangkat sudah memutus koneksi
+        if (res.destroyed) return undefined;
     }
 
-    // Versi dibaca sebelum data: data yang dikirim paling tidak sebaru versinya
-    const version = configVersion(aquariumId);
-    const aquarium = await getAquarium(aquariumId);
-    if (!aquarium) return res.status(404).json(NOT_FOUND);
-    const { tempConfig, lightingConfig, feederConfig, systemConfig } = configSections(aquarium.row);
+    // versi sebelum
+    const currentConfigVersion = getConfigVersion(aquariumId);
+    const aquarium = await getAquariumById(aquariumId);
+    if (!aquarium) return res.status(404).json(AQUARIUM_NOT_FOUND_RESPONSE);
+    const { tempConfig, lightingConfig, feederConfig, systemConfig } = extractConfigSections(aquarium.row);
     return res.json({
-        configVersion: version,
+        configVersion: currentConfigVersion,
         tempConfig,
         lightingConfig,
         feederConfig,
@@ -319,4 +327,4 @@ router.get("/:aquariumId/config", async (req, res) => {
     });
 });
 
-export default router;
+export default hardwareRouter;

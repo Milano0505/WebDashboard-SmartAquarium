@@ -5,7 +5,7 @@
     --font-sans: "Inter", system-ui, sans-serif;
 }
 
-/* Scrollbar tipis biru (Firefox: aturan pertama, Chrome/Edge/Safari: ::-webkit) */
+/* scrollbar */
 * {
     scrollbar-width: thin;
     scrollbar-color: rgba(59, 124, 244, 0.25) transparent;
@@ -27,7 +27,7 @@
     background: rgba(59, 124, 244, 0.55);
 }
 
-/* Konten halaman: scrollbar lebih jelas saat hover */
+/* page scrollbar */
 .scroll-area {
     overflow-y: auto;
 }
@@ -38,7 +38,7 @@
     background: rgba(59, 124, 244, 0.45);
 }
 
-/* Tanpa scrollbar di header dan sidebar */
+/* hidden scrollbar */
 header,
 aside,
 aside * {
@@ -51,7 +51,7 @@ aside *::-webkit-scrollbar {
     display: none !important;
 }
 
-/* Slider; bagian track yang terisi diatur inline oleh <RangeSlider> */
+/* range slider */
 input[type="range"] {
     -webkit-appearance: none;
     appearance: none;

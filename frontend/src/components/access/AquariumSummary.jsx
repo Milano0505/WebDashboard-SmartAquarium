@@ -1,37 +1,42 @@
 import { useState } from "react";
-import { adminUpdateAquarium } from "../../api/service";
-import { Toggle } from "../ui";
-import { inputClass, Section, SmallButton, StatusMessages, useAction } from "./shared";
+import { adminUpdateAquarium } from "../../api/backendApi";
+import { ToggleSwitch } from "../UiKit";
+import { INPUT_CLASS_NAME, SectionCard, SmallButton, StatusMessages, useApiAction } from "./AccessUiParts";
 
-// Ringkasan akuarium untuk admin: ganti nama dan atur apakah viewer boleh melihat monitoringnya
-export default function AquariumSummary({ aquarium, onChanged }) {
-    const [name, setName] = useState(aquarium.name);
-    const { status, busy, run } = useAction();
+// aquarium summary
+export default function AquariumSummary({ aquarium, onDataChanged }) {
+    // state
+    const [aquariumName, setAquariumName] = useState(aquarium.name);
+    const { status, isBusy, runApiAction } = useApiAction();
 
-    const saveName = async event => {
+    // save name
+    const saveAquariumName = async event => {
         event.preventDefault();
-        if (name.trim() === aquarium.name) return;
-        if (await run(() => adminUpdateAquarium(aquarium.id, { name: name.trim() }), "Name saved.")) onChanged?.();
+        if (aquariumName.trim() === aquarium.name) return;
+        if (await runApiAction(() => adminUpdateAquarium(aquarium.id, { name: aquariumName.trim() }), "Name saved."))
+            onDataChanged?.();
     };
 
-    const togglePublic = async checked => {
+    // toggle public
+    const togglePublicMonitoring = async checked => {
         const message = checked ? "Viewers can now see this aquarium." : "Monitoring is now hidden from viewers.";
-        if (await run(() => adminUpdateAquarium(aquarium.id, { monitoringPublic: checked }), message)) onChanged?.();
+        if (await runApiAction(() => adminUpdateAquarium(aquarium.id, { monitoringPublic: checked }), message))
+            onDataChanged?.();
     };
 
     return (
-        <Section title="Overview" description={`ID: ${aquarium.id}`}>
+        <SectionCard title="Overview" description={`ID: ${aquarium.id}`}>
             <StatusMessages status={status} />
-            <form onSubmit={saveName} className="flex flex-col gap-2 sm:flex-row">
+            <form onSubmit={saveAquariumName} className="flex flex-col gap-2 sm:flex-row">
                 <input
                     required
                     maxLength={80}
-                    value={name}
-                    onChange={event => setName(event.target.value)}
-                    className={inputClass}
+                    value={aquariumName}
+                    onChange={event => setAquariumName(event.target.value)}
+                    className={INPUT_CLASS_NAME}
                     aria-label="Aquarium name"
                 />
-                <SmallButton type="submit" tone="primary" disabled={busy || name.trim() === aquarium.name}>
+                <SmallButton type="submit" tone="primary" disabled={isBusy || aquariumName.trim() === aquarium.name}>
                     Save name
                 </SmallButton>
             </form>
@@ -42,13 +47,13 @@ export default function AquariumSummary({ aquarium, onChanged }) {
                         Users without a role can see this aquarium on the dashboard (read-only).
                     </div>
                 </div>
-                <Toggle
+                <ToggleSwitch
                     checked={Boolean(aquarium.monitoringPublic)}
-                    onChange={togglePublic}
-                    disabled={busy}
+                    onChange={togglePublicMonitoring}
+                    disabled={isBusy}
                     label="Public monitoring for viewers"
                 />
             </div>
-        </Section>
+        </SectionCard>
     );
 }

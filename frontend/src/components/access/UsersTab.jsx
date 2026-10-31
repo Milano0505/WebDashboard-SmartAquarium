@@ -1,20 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
-import { adminGetUsers, adminSetUserRole } from "../../api/service";
+import { adminGetUsers, adminSetUserRole } from "../../api/backendApi";
 import { useAuth } from "../../context/AuthContext";
 import RoleBadge from "../RoleBadge";
-import { Spinner } from "../ui";
-import { EmptyState, inputClass, PersonRow, Section, SmallButton, StatusMessages, useAction } from "./shared";
+import { LoadingSpinner } from "../UiKit";
+import {
+    EmptyState,
+    INPUT_CLASS_NAME,
+    PersonRow,
+    SectionCard,
+    SmallButton,
+    StatusMessages,
+    useApiAction,
+} from "./AccessUiParts";
 
-// Semua user (admin): peran akses, akuarium mereka, dan tombol jadikan admin. Peran owner/member diatur
-// per akuarium di tab Aquariums
+// users tab
 export default function UsersTab() {
     const { user: currentUser } = useAuth();
+    // state
     const [users, setUsers] = useState(null);
     const [loadError, setLoadError] = useState("");
-    const [search, setSearch] = useState("");
-    const { status, busy, run } = useAction();
+    const [searchText, setSearchText] = useState("");
+    const { status, isBusy, runApiAction } = useApiAction();
 
-    const load = useCallback(
+    // load users
+    const loadUsers = useCallback(
         () =>
             adminGetUsers()
                 .then(result => {
@@ -25,49 +34,52 @@ export default function UsersTab() {
         [],
     );
 
+    // initial load
     useEffect(() => {
-        load();
-    }, [load]);
+        loadUsers();
+    }, [loadUsers]);
 
-    const toggleAdmin = async user => {
+    // toggle admin
+    const toggleAdminRole = async user => {
         const role = user.role === "admin" ? "user" : "admin";
         const label = user.fullName || user.email;
         if (role === "admin" && !window.confirm(`Make ${label} an admin? Admins can manage everything.`)) return;
         if (
-            await run(
+            await runApiAction(
                 () => adminSetUserRole(user.userId, role),
                 `${label} is now ${role === "admin" ? "an admin" : "a regular user"}.`,
             )
         ) {
-            await load();
+            await loadUsers();
         }
     };
 
-    const term = search.trim().toLowerCase();
-    const shown = (users || []).filter(
+    // filter users
+    const searchTerm = searchText.trim().toLowerCase();
+    const visibleUsers = (users || []).filter(
         user =>
-            !term ||
-            (user.fullName || "").toLowerCase().includes(term) ||
-            (user.email || "").toLowerCase().includes(term),
+            !searchTerm ||
+            (user.fullName || "").toLowerCase().includes(searchTerm) ||
+            (user.email || "").toLowerCase().includes(searchTerm),
     );
 
     return (
-        <Section title="All users" description="Users without any role can only watch public monitoring (viewer).">
+        <SectionCard title="All users" description="Users without any role can only watch public monitoring (viewer).">
             <StatusMessages status={status} extraError={loadError} />
             <input
-                value={search}
-                onChange={event => setSearch(event.target.value)}
+                value={searchText}
+                onChange={event => setSearchText(event.target.value)}
                 placeholder="Search by name or email"
-                className={inputClass}
+                className={INPUT_CLASS_NAME}
                 aria-label="Search users"
             />
             {users === null && !loadError ? (
-                <Spinner />
-            ) : shown.length === 0 ? (
+                <LoadingSpinner />
+            ) : visibleUsers.length === 0 ? (
                 <EmptyState>No users found.</EmptyState>
             ) : (
                 <ul className="divide-y divide-slate-100">
-                    {shown.map(user => (
+                    {visibleUsers.map(user => (
                         <PersonRow key={user.userId} person={user}>
                             <div className="hidden max-w-[220px] flex-wrap justify-end gap-1 md:flex">
                                 {user.aquariums.map(item => (
@@ -81,7 +93,7 @@ export default function UsersTab() {
                             </div>
                             <RoleBadge role={user.accessRole || (user.role === "admin" ? "admin" : "viewer")} />
                             {user.userId !== currentUser?.id && (
-                                <SmallButton disabled={busy} onClick={() => toggleAdmin(user)}>
+                                <SmallButton disabled={isBusy} onClick={() => toggleAdminRole(user)}>
                                     {user.role === "admin" ? "Remove admin" : "Make admin"}
                                 </SmallButton>
                             )}
@@ -89,6 +101,6 @@ export default function UsersTab() {
                     ))}
                 </ul>
             )}
-        </Section>
+        </SectionCard>
     );
 }

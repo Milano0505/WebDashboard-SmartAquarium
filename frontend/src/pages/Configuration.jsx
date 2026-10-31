@@ -2,36 +2,38 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     changePassword,
-    getAquarium,
+    getAquariumDetail,
     updateSystemConfig,
     updateTemperatureConfig,
     updateUserProfile,
-} from "../api/service";
-import { Camera, Eye, EyeOff, Lock, Logout, Mail, User } from "../components/Icons";
+} from "../api/backendApi";
+import { CameraIcon, EyeIcon, EyeOffIcon, LockIcon, LogoutIcon, MailIcon, UserIcon } from "../components/Icons";
 import {
     Card,
     ErrorAlert,
     InputField,
     PageHeader,
-    PrimaryBtn,
+    PrimaryButton,
     RangeSlider,
-    Spinner,
+    LoadingSpinner,
     SuccessAlert,
-    Toggle,
-} from "../components/ui";
+    ToggleSwitch,
+} from "../components/UiKit";
 import RoleBadge from "../components/RoleBadge";
 import { useAuth } from "../context/AuthContext";
-import { formatTemp, initialsOf } from "../utils/format";
+import { formatTemperature, getInitials } from "../utils/displayFormatters";
 import { createProfilePhotoDataUrl } from "../utils/profilePhoto";
 
-const TABS = [
+// tabs
+const CONFIG_TABS = [
     { id: "profile", label: "👤 Profile" },
     { id: "system", label: "⚙️ System" },
     { id: "alerts", label: "🔔 Alerts" },
     { id: "about", label: "ℹ️ About" },
 ];
 
-const TIMEZONES = [
+// timezones
+const TIMEZONE_GROUPS = [
     {
         group: "Southeast Asia",
         zones: [
@@ -94,14 +96,15 @@ const TIMEZONES = [
     },
 ];
 
-// Isi tab About (samakan dengan fitur di README.md)
-const FEATURES = [
+// features
+const ABOUT_FEATURES = [
     ["🌡️", "Temperature monitoring"],
     ["🔥", "Heater control"],
     ["💡", "Lighting control"],
     ["🐟", "Feeding control"],
 ];
 
+// tech stack
 const TECH_STACK = [
     ["Frontend", "React 19 + Tailwind CSS 4"],
     ["Build Tool", "Vite 8"],
@@ -112,6 +115,7 @@ const TECH_STACK = [
     ["Device API", "HTTP REST API"],
 ];
 
+// info rows
 function InfoRows({ rows }) {
     return rows.map(([label, value]) => (
         <div key={label} className="flex items-center justify-between gap-4 py-3">
@@ -121,26 +125,25 @@ function InfoRows({ rows }) {
     ));
 }
 
-// ---------- Tab Profile ----------
-
+// profile tab
 function ProfileTab() {
     const { user, setUser, signOut } = useAuth();
     const navigate = useNavigate();
-    const fileRef = useRef();
+    const photoFileInputRef = useRef();
 
+    // profile state
     const [fullName, setFullName] = useState(user?.fullName || "");
     const [photoUrl, setPhotoUrl] = useState(user?.photoUrl || null);
     const [profileStatus, setProfileStatus] = useState({ error: "", saved: "" });
     const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
-    const [showPasswords, setShowPasswords] = useState(false);
+    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [passwordStatus, setPasswordStatus] = useState({ error: "", saved: "" });
-    const [saving, setSaving] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
-    // Foto langsung disimpan begitu dipilih (tanpa menunggu tombol Save Profile): dikecilkan jadi JPEG
-    // lalu dikirim sebagai perubahan profil terpisah, sehingga nama yang belum disimpan tidak ikut terkirim
+    // save photo
     const savePhoto = async file => {
         setProfileStatus({ error: "", saved: "" });
-        setSaving(true);
+        setIsSaving(true);
         try {
             const nextPhotoUrl = file ? await createProfilePhotoDataUrl(file) : null;
             await updateUserProfile(user.id, { photoUrl: nextPhotoUrl });
@@ -151,21 +154,21 @@ function ProfileTab() {
         } catch (error) {
             setProfileStatus({ error: error.message || "Could not save the profile photo.", saved: "" });
         } finally {
-            setSaving(false);
+            setIsSaving(false);
         }
     };
 
+    // photo selected
     const handlePhotoSelected = event => {
         const file = event.target.files[0];
-        // Kosongkan input agar memilih berkas yang sama lagi tetap memicu onChange
         event.target.value = "";
         if (file) savePhoto(file);
     };
 
-    // Hanya nama; foto disimpan terpisah oleh savePhoto
+    // save profile
     const handleSaveProfile = async () => {
         setProfileStatus({ error: "", saved: "" });
-        setSaving(true);
+        setIsSaving(true);
         try {
             await updateUserProfile(user.id, { fullName });
             setUser({ ...user, fullName });
@@ -174,30 +177,32 @@ function ProfileTab() {
         } catch (error) {
             setProfileStatus({ error: error.message || "Could not save profile.", saved: "" });
         } finally {
-            setSaving(false);
+            setIsSaving(false);
         }
     };
 
+    // change password
     const handleChangePassword = async () => {
-        const fail = error => setPasswordStatus({ error, saved: "" });
-        if (!passwords.current || !passwords.next) return fail("Please fill in all fields.");
-        if (passwords.next !== passwords.confirm) return fail("New passwords do not match.");
-        if (passwords.next.length < 6) return fail("Password must be at least 6 characters.");
+        const setPasswordError = error => setPasswordStatus({ error, saved: "" });
+        if (!passwords.current || !passwords.next) return setPasswordError("Please fill in all fields.");
+        if (passwords.next !== passwords.confirm) return setPasswordError("New passwords do not match.");
+        if (passwords.next.length < 6) return setPasswordError("Password must be at least 6 characters.");
 
         setPasswordStatus({ error: "", saved: "" });
-        setSaving(true);
+        setIsSaving(true);
         try {
             await changePassword({ currentPassword: passwords.current, newPassword: passwords.next });
             setPasswords({ current: "", next: "", confirm: "" });
             setPasswordStatus({ error: "", saved: "Password updated successfully." });
             window.dispatchEvent(new Event("sa:notifications-changed"));
         } catch (error) {
-            fail(error.message || "Could not change password.");
+            setPasswordError(error.message || "Could not change password.");
         } finally {
-            setSaving(false);
+            setIsSaving(false);
         }
     };
 
+    // sign out
     const handleSignOut = async () => {
         try {
             await signOut();
@@ -212,33 +217,33 @@ function ProfileTab() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
             <div className="space-y-4">
                 <Card className="flex flex-col items-center py-6">
-                    <button onClick={() => fileRef.current?.click()} className="relative group mb-3">
+                    <button onClick={() => photoFileInputRef.current?.click()} className="relative group mb-3">
                         <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-blue-200">
                             {photoUrl ? (
                                 <img src={photoUrl} alt="avatar" className="w-full h-full object-cover" />
                             ) : (
                                 <div className="w-full h-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold">
-                                    {initialsOf(fullName)}
+                                    {getInitials(fullName)}
                                 </div>
                             )}
                         </div>
                         <div className="absolute inset-0 rounded-full bg-black/25 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Camera />
+                            <CameraIcon />
                         </div>
                     </button>
                     <div className="flex items-center gap-3">
                         <button
                             type="button"
-                            disabled={saving}
+                            disabled={isSaving}
                             className="text-xs text-blue-500 font-semibold disabled:opacity-50"
-                            onClick={() => fileRef.current?.click()}
+                            onClick={() => photoFileInputRef.current?.click()}
                         >
-                            {saving ? "Saving…" : "Change Photo"}
+                            {isSaving ? "Saving…" : "Change Photo"}
                         </button>
                         {photoUrl && (
                             <button
                                 type="button"
-                                disabled={saving}
+                                disabled={isSaving}
                                 className="text-xs text-slate-400 font-semibold hover:text-red-500 disabled:opacity-50"
                                 onClick={() => savePhoto(null)}
                             >
@@ -249,7 +254,7 @@ function ProfileTab() {
                     <p className="mt-1 text-[11px] text-slate-400">JPG, PNG, or WebP up to 10 MB. Saved right away.</p>
 
                     <input
-                        ref={fileRef}
+                        ref={photoFileInputRef}
                         type="file"
                         accept="image/*"
                         onChange={handlePhotoSelected}
@@ -269,31 +274,31 @@ function ProfileTab() {
                         <InputField
                             key={key}
                             label={label}
-                            type={showPasswords ? "text" : "password"}
+                            type={isPasswordVisible ? "text" : "password"}
                             value={passwords[key]}
                             onChange={event => setPasswords(current => ({ ...current, [key]: event.target.value }))}
                             placeholder="••••••••"
-                            icon={Lock}
+                            icon={LockIcon}
                             right={
                                 key === "current" && (
                                     <button
                                         type="button"
-                                        onClick={() => setShowPasswords(!showPasswords)}
+                                        onClick={() => setIsPasswordVisible(!isPasswordVisible)}
                                         className="text-slate-400 p-1"
                                     >
-                                        {showPasswords ? <EyeOff /> : <Eye />}
+                                        {isPasswordVisible ? <EyeOffIcon /> : <EyeIcon />}
                                     </button>
                                 )
                             }
                         />
                     ))}
-                    <PrimaryBtn
+                    <PrimaryButton
                         onClick={handleChangePassword}
-                        disabled={saving}
+                        disabled={isSaving}
                         className="bg-slate-800 hover:bg-slate-900"
                     >
                         Update Password
-                    </PrimaryBtn>
+                    </PrimaryButton>
                 </Card>
             </div>
 
@@ -305,35 +310,34 @@ function ProfileTab() {
                         label="Full Name"
                         value={fullName}
                         onChange={event => setFullName(event.target.value)}
-                        icon={User}
+                        icon={UserIcon}
                     />
                     <InputField
                         label="Email Address"
                         type="email"
                         value={user?.email || ""}
-                        icon={Mail}
+                        icon={MailIcon}
                         readOnly
                         hint="Email is used to sign in and cannot be changed."
                     />
-                    <PrimaryBtn onClick={handleSaveProfile} disabled={saving}>
-                        {saving ? "Saving…" : "Save Profile"}
-                    </PrimaryBtn>
+                    <PrimaryButton onClick={handleSaveProfile} disabled={isSaving}>
+                        {isSaving ? "Saving…" : "Save Profile"}
+                    </PrimaryButton>
                 </Card>
 
                 <button
                     onClick={handleSignOut}
                     className="w-full flex items-center justify-center gap-2 py-3 bg-red-50 text-red-600 border border-red-200 font-semibold rounded-xl hover:bg-red-100 transition-colors text-sm"
                 >
-                    <Logout /> Sign Out
+                    <LogoutIcon /> Sign Out
                 </button>
             </div>
         </div>
     );
 }
 
-// ---------- Tab System ----------
-
-function SystemTab({ aquarium, updateSection, saving, onSave }) {
+// system tab
+function SystemTab({ aquarium, updateAquariumSection, isSaving, onSaveSettings }) {
     const { tempConfig, systemConfig } = aquarium;
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
@@ -343,7 +347,7 @@ function SystemTab({ aquarium, updateSection, saving, onSave }) {
                     {["Celsius", "Fahrenheit"].map(unit => (
                         <button
                             key={unit}
-                            onClick={() => updateSection("tempConfig", { unit })}
+                            onClick={() => updateAquariumSection("tempConfig", { unit })}
                             className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors ${
                                 tempConfig.unit === unit
                                     ? "bg-blue-500 text-white"
@@ -359,10 +363,10 @@ function SystemTab({ aquarium, updateSection, saving, onSave }) {
                     <label className="block text-xs font-semibold text-slate-600 mb-1.5">Timezone</label>
                     <select
                         value={systemConfig.timezone}
-                        onChange={event => updateSection("systemConfig", { timezone: event.target.value })}
+                        onChange={event => updateAquariumSection("systemConfig", { timezone: event.target.value })}
                         className="w-full px-3 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                     >
-                        {TIMEZONES.map(({ group, zones }) => (
+                        {TIMEZONE_GROUPS.map(({ group, zones }) => (
                             <optgroup key={group} label={group}>
                                 {zones.map(([value, label]) => (
                                     <option key={value} value={value}>
@@ -391,25 +395,32 @@ function SystemTab({ aquarium, updateSection, saving, onSave }) {
                     max={60}
                     minLabel="1s"
                     maxLabel="60s"
-                    onChange={pollFrequency => updateSection("systemConfig", { pollFrequency })}
+                    onChange={pollFrequency => updateAquariumSection("systemConfig", { pollFrequency })}
                 />
-                <PrimaryBtn onClick={onSave} disabled={saving}>
-                    {saving ? "Saving…" : "Save System Settings"}
-                </PrimaryBtn>
+                <PrimaryButton onClick={onSaveSettings} disabled={isSaving}>
+                    {isSaving ? "Saving…" : "Save System Settings"}
+                </PrimaryButton>
             </Card>
         </div>
     );
 }
 
-// ---------- Tab Alerts ----------
-
-function browserNotificationHint({ supported, permission, enabled }) {
-    if (!supported) return "Notifications are not supported by this browser.";
+// notification hint
+function getBrowserNotificationHint({ isSupported, permission, isEnabled }) {
+    if (!isSupported) return "Notifications are not supported by this browser.";
     if (permission === "denied") return "Permission is blocked in browser settings.";
-    return enabled ? "Enabled while the dashboard is open." : "Notifications are off.";
+    return isEnabled ? "Enabled while the dashboard is open." : "Notifications are off.";
 }
 
-function AlertsTab({ aquarium, updateSection, saving, onSave, browserNotifications, onToggleBrowserNotifications }) {
+// alerts tab
+function AlertsTab({
+    aquarium,
+    updateAquariumSection,
+    isSaving,
+    onSaveSettings,
+    browserNotifications,
+    onToggleBrowserNotifications,
+}) {
     const { tempConfig } = aquarium;
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
@@ -423,28 +434,28 @@ function AlertsTab({ aquarium, updateSection, saving, onSave, browserNotificatio
                 </div>
                 <RangeSlider
                     label="Min Temperature"
-                    valueLabel={formatTemp(tempConfig.minTempThreshold, tempConfig.unit)}
+                    valueLabel={formatTemperature(tempConfig.minTempThreshold, tempConfig.unit)}
                     value={tempConfig.minTempThreshold}
                     min={10}
                     max={25}
-                    minLabel={formatTemp(10, tempConfig.unit)}
-                    maxLabel={formatTemp(25, tempConfig.unit)}
-                    onChange={minTempThreshold => updateSection("tempConfig", { minTempThreshold })}
+                    minLabel={formatTemperature(10, tempConfig.unit)}
+                    maxLabel={formatTemperature(25, tempConfig.unit)}
+                    onChange={minTempThreshold => updateAquariumSection("tempConfig", { minTempThreshold })}
                 />
                 <RangeSlider
                     label="Max Temperature"
-                    valueLabel={formatTemp(tempConfig.maxTempThreshold, tempConfig.unit)}
+                    valueLabel={formatTemperature(tempConfig.maxTempThreshold, tempConfig.unit)}
                     value={tempConfig.maxTempThreshold}
                     min={22}
                     max={35}
                     color="#ef4444"
-                    minLabel={formatTemp(22, tempConfig.unit)}
-                    maxLabel={formatTemp(35, tempConfig.unit)}
-                    onChange={maxTempThreshold => updateSection("tempConfig", { maxTempThreshold })}
+                    minLabel={formatTemperature(22, tempConfig.unit)}
+                    maxLabel={formatTemperature(35, tempConfig.unit)}
+                    onChange={maxTempThreshold => updateAquariumSection("tempConfig", { maxTempThreshold })}
                 />
-                <PrimaryBtn onClick={onSave} disabled={saving}>
-                    {saving ? "Saving…" : "Save Temperature Thresholds"}
-                </PrimaryBtn>
+                <PrimaryButton onClick={onSaveSettings} disabled={isSaving}>
+                    {isSaving ? "Saving…" : "Save Temperature Thresholds"}
+                </PrimaryButton>
             </Card>
 
             <Card className="space-y-4">
@@ -454,26 +465,25 @@ function AlertsTab({ aquarium, updateSection, saving, onSave, browserNotificatio
                         <div className="text-sm font-semibold text-slate-700">Browser Notifications</div>
                         <div className="text-xs text-slate-400">Show new alerts on this device</div>
                     </div>
-                    <Toggle
-                        checked={browserNotifications.enabled}
-                        disabled={!browserNotifications.supported}
+                    <ToggleSwitch
+                        checked={browserNotifications.isEnabled}
+                        disabled={!browserNotifications.isSupported}
                         label="Browser Notifications"
                         onChange={onToggleBrowserNotifications}
                     />
                 </div>
-                <p className="text-xs text-slate-400">{browserNotificationHint(browserNotifications)}</p>
+                <p className="text-xs text-slate-400">{getBrowserNotificationHint(browserNotifications)}</p>
             </Card>
         </div>
     );
 }
 
-// ---------- Tab About ----------
-
+// about tab
 function AboutTab() {
     const { aquariums, isAdmin } = useAuth();
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-            {/* Akuarium milik user (admin: semua akuarium) beserta perannya */}
+            {/* aquarium list */}
             <Card className="space-y-3 md:col-span-2">
                 <p className="text-sm font-bold text-slate-700">{isAdmin ? "All aquariums" : "Your aquariums"}</p>
                 {aquariums.length === 0 ? (
@@ -509,7 +519,7 @@ function AboutTab() {
                     Web dashboard to monitor and control an ESP32-based smart aquarium.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-1 gap-2 border-t border-slate-100 pt-4">
-                    {FEATURES.map(([icon, title]) => (
+                    {ABOUT_FEATURES.map(([icon, title]) => (
                         <div key={title} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                             <span>{icon}</span>
                             {title}
@@ -526,37 +536,38 @@ function AboutTab() {
     );
 }
 
-// ---------- Halaman ----------
-
+// configuration page
 export default function ConfigurationPage({ browserNotifications }) {
-    const { activeAquariumId: AQUARIUM_ID, canControl, isViewer } = useAuth();
-    const [tab, setTab] = useState("profile");
+    const { activeAquariumId, canControlAquarium, isViewer } = useAuth();
+    // state
+    const [activeTab, setActiveTab] = useState("profile");
     const [aquarium, setAquarium] = useState(null);
-    const [loading, setLoading] = useState(Boolean(AQUARIUM_ID));
+    const [isLoading, setIsLoading] = useState(Boolean(activeAquariumId));
     const [loadError, setLoadError] = useState("");
-    const [settingsSaving, setSettingsSaving] = useState(false);
+    const [isSettingsSaving, setIsSettingsSaving] = useState(false);
     const [settingsStatus, setSettingsStatus] = useState({ error: "", saved: "" });
 
-    // Tanpa akuarium aktif tidak ada yang dimuat; tab Profile dan About tetap bisa dipakai
+    // fetch aquarium
     useEffect(() => {
-        if (!AQUARIUM_ID) return undefined;
+        if (!activeAquariumId) return undefined;
         let isMounted = true;
-        getAquarium(AQUARIUM_ID)
-            .then(data => isMounted && setAquarium(data))
+        getAquariumDetail(activeAquariumId)
+            .then(aquariumDetail => isMounted && setAquarium(aquariumDetail))
             .catch(error => isMounted && setLoadError(error.message || "Could not load configuration."))
-            .finally(() => isMounted && setLoading(false));
+            .finally(() => isMounted && setIsLoading(false));
         return () => {
             isMounted = false;
         };
-    }, [AQUARIUM_ID]);
+    }, [activeAquariumId]);
 
-    // Perubahan disimpan lokal sampai tombol Save ditekan
-    const updateSection = (section, patch) =>
+    // local update
+    const updateAquariumSection = (section, patch) =>
         setAquarium(current => ({ ...current, [section]: { ...current[section], ...patch } }));
 
+    // save settings
     const saveSettings = async (save, successMessage, failureMessage) => {
         setSettingsStatus({ error: "", saved: "" });
-        setSettingsSaving(true);
+        setIsSettingsSaving(true);
         try {
             await save();
             setSettingsStatus({ error: "", saved: successMessage });
@@ -564,14 +575,15 @@ export default function ConfigurationPage({ browserNotifications }) {
         } catch (error) {
             setSettingsStatus({ error: error.message || failureMessage, saved: "" });
         } finally {
-            setSettingsSaving(false);
+            setIsSettingsSaving(false);
         }
     };
 
-    const handleSaveSystem = () =>
+    // save system
+    const handleSaveSystemSettings = () =>
         saveSettings(
             () =>
-                updateSystemConfig(AQUARIUM_ID, {
+                updateSystemConfig(activeAquariumId, {
                     unit: aquarium.tempConfig.unit,
                     pollFrequency: aquarium.systemConfig.pollFrequency,
                     timezone: aquarium.systemConfig.timezone,
@@ -580,10 +592,11 @@ export default function ConfigurationPage({ browserNotifications }) {
             "Could not save system settings.",
         );
 
-    const handleSaveThresholds = () =>
+    // save thresholds
+    const handleSaveTemperatureThresholds = () =>
         saveSettings(
             () =>
-                updateTemperatureConfig(AQUARIUM_ID, {
+                updateTemperatureConfig(activeAquariumId, {
                     minTempThreshold: aquarium.tempConfig.minTempThreshold,
                     maxTempThreshold: aquarium.tempConfig.maxTempThreshold,
                 }),
@@ -591,10 +604,11 @@ export default function ConfigurationPage({ browserNotifications }) {
             "Could not save alert settings.",
         );
 
-    const handleToggleBrowserNotifications = async enabled => {
+    // toggle notifications
+    const handleToggleBrowserNotifications = async shouldEnable => {
         setSettingsStatus({ error: "", saved: "" });
         try {
-            const permission = await browserNotifications.setBrowserNotifications(enabled);
+            const permission = await browserNotifications.setBrowserNotificationsEnabled(shouldEnable);
             if (permission === "unsupported") {
                 setSettingsStatus({ error: "This browser does not support browser notifications.", saved: "" });
             } else if (permission === "denied") {
@@ -605,7 +619,7 @@ export default function ConfigurationPage({ browserNotifications }) {
             } else {
                 setSettingsStatus({
                     error: "",
-                    saved: enabled ? "Browser notifications enabled." : "Browser notifications disabled.",
+                    saved: shouldEnable ? "Browser notifications enabled." : "Browser notifications disabled.",
                 });
             }
         } catch (error) {
@@ -613,12 +627,12 @@ export default function ConfigurationPage({ browserNotifications }) {
         }
     };
 
-    // Isi tab System dan Alerts: tergantung akuarium aktif dan status pemuatannya
-    const renderAquariumTab = () => {
-        if (!AQUARIUM_ID) {
+    // aquarium tab
+    const renderAquariumSettingsTab = () => {
+        if (!activeAquariumId) {
             return <p className="py-8 text-center text-sm text-slate-400">No aquarium is selected.</p>;
         }
-        if (loading) return <Spinner />;
+        if (isLoading) return <LoadingSpinner />;
         if (loadError) return <ErrorAlert message={loadError} />;
         if (!aquarium) return <p className="py-8 text-center text-sm text-slate-400">No Data</p>;
 
@@ -629,22 +643,22 @@ export default function ConfigurationPage({ browserNotifications }) {
                         You have view-only access. Ask an admin to give you a role to change settings.
                     </div>
                 )}
-                {/* Tanpa peran (viewer) semua kontrol dimatikan; backend juga menolak dengan 403 */}
-                <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
-                    {tab === "system" && (
+                {/* disable controls */}
+                <fieldset disabled={!canControlAquarium} className="m-0 min-w-0 border-0 p-0">
+                    {activeTab === "system" && (
                         <SystemTab
                             aquarium={aquarium}
-                            updateSection={updateSection}
-                            saving={settingsSaving}
-                            onSave={handleSaveSystem}
+                            updateAquariumSection={updateAquariumSection}
+                            isSaving={isSettingsSaving}
+                            onSaveSettings={handleSaveSystemSettings}
                         />
                     )}
-                    {tab === "alerts" && (
+                    {activeTab === "alerts" && (
                         <AlertsTab
                             aquarium={aquarium}
-                            updateSection={updateSection}
-                            saving={settingsSaving}
-                            onSave={handleSaveThresholds}
+                            updateAquariumSection={updateAquariumSection}
+                            isSaving={isSettingsSaving}
+                            onSaveSettings={handleSaveTemperatureThresholds}
                             browserNotifications={browserNotifications}
                             onToggleBrowserNotifications={handleToggleBrowserNotifications}
                         />
@@ -665,12 +679,12 @@ export default function ConfigurationPage({ browserNotifications }) {
             )}
 
             <div className="flex gap-2 overflow-x-auto pb-1 mb-5" style={{ scrollbarWidth: "none" }}>
-                {TABS.map(item => (
+                {CONFIG_TABS.map(item => (
                     <button
                         key={item.id}
-                        onClick={() => setTab(item.id)}
+                        onClick={() => setActiveTab(item.id)}
                         className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-                            tab === item.id
+                            activeTab === item.id
                                 ? "bg-blue-500 text-white shadow-sm"
                                 : "bg-white border border-slate-200 text-slate-600"
                         }`}
@@ -680,9 +694,9 @@ export default function ConfigurationPage({ browserNotifications }) {
                 ))}
             </div>
 
-            {tab === "profile" && <ProfileTab />}
-            {(tab === "system" || tab === "alerts") && renderAquariumTab()}
-            {tab === "about" && <AboutTab />}
+            {activeTab === "profile" && <ProfileTab />}
+            {(activeTab === "system" || activeTab === "alerts") && renderAquariumSettingsTab()}
+            {activeTab === "about" && <AboutTab />}
         </div>
     );
 }

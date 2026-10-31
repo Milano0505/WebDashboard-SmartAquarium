@@ -1,13 +1,16 @@
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const MAX_IMAGE_DIMENSION = 256;
-const MAX_COMPRESSED_SIZE = 180 * 1024;
+// max file
+const MAX_PHOTO_FILE_BYTES = 10 * 1024 * 1024;
+// max dimension
+const MAX_PHOTO_DIMENSION_PX = 256;
+// max compressed
+const MAX_COMPRESSED_PHOTO_BYTES = 180 * 1024;
 
-// Kecilkan gambar (maks. 256 px) lalu ubah jadi data URL JPEG (maks. 180 KB, batas backend)
+// photo url
 export function createProfilePhotoDataUrl(file) {
     if (!file?.type?.startsWith("image/")) {
         return Promise.reject(new Error("Choose a valid image file."));
     }
-    if (file.size > MAX_FILE_SIZE) {
+    if (file.size > MAX_PHOTO_FILE_BYTES) {
         return Promise.reject(new Error("Profile photos must be smaller than 10 MB."));
     }
 
@@ -16,7 +19,7 @@ export function createProfilePhotoDataUrl(file) {
         const image = new Image();
         image.onload = () => {
             URL.revokeObjectURL(objectUrl);
-            const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+            const scale = Math.min(1, MAX_PHOTO_DIMENSION_PX / Math.max(image.width, image.height));
             const canvas = document.createElement("canvas");
             canvas.width = Math.max(1, Math.round(image.width * scale));
             canvas.height = Math.max(1, Math.round(image.height * scale));
@@ -27,7 +30,7 @@ export function createProfilePhotoDataUrl(file) {
                         reject(new Error("Could not process the selected profile photo."));
                         return;
                     }
-                    if (blob.size > MAX_COMPRESSED_SIZE) {
+                    if (blob.size > MAX_COMPRESSED_PHOTO_BYTES) {
                         reject(new Error("The processed profile photo is too large. Choose a simpler image."));
                         return;
                     }

@@ -1,22 +1,24 @@
 import { useState } from "react";
-import { EmptyState, inputClass, PersonRow, SmallButton } from "./shared";
+import { EmptyState, INPUT_CLASS_NAME, PersonRow, SmallButton } from "./AccessUiParts";
 
-// Panel tambah orang: tombol membuka daftar kandidat dengan pencarian (nama atau email) dan tombol Add per baris
-export default function AddPersonPanel({ label, candidates, busy, onAdd }) {
-    const [open, setOpen] = useState(false);
-    const [search, setSearch] = useState("");
+// add person
+export default function AddPersonPanel({ label, candidates, isBusy, onAddPerson }) {
+    // panel state
+    const [isOpen, setIsOpen] = useState(false);
+    const [searchText, setSearchText] = useState("");
 
-    const term = search.trim().toLowerCase();
-    const matches = candidates.filter(
+    // filter candidates
+    const searchTerm = searchText.trim().toLowerCase();
+    const matchingCandidates = candidates.filter(
         candidate =>
-            !term ||
-            (candidate.fullName || "").toLowerCase().includes(term) ||
-            (candidate.email || "").toLowerCase().includes(term),
+            !searchTerm ||
+            (candidate.fullName || "").toLowerCase().includes(searchTerm) ||
+            (candidate.email || "").toLowerCase().includes(searchTerm),
     );
 
-    if (!open) {
+    if (!isOpen) {
         return (
-            <SmallButton tone="primary" onClick={() => setOpen(true)}>
+            <SmallButton tone="primary" onClick={() => setIsOpen(true)}>
                 + {label}
             </SmallButton>
         );
@@ -28,30 +30,34 @@ export default function AddPersonPanel({ label, candidates, busy, onAdd }) {
                 <span className="text-xs font-semibold text-slate-600">{label}</span>
                 <SmallButton
                     onClick={() => {
-                        setOpen(false);
-                        setSearch("");
+                        setIsOpen(false);
+                        setSearchText("");
                     }}
                 >
                     Close
                 </SmallButton>
             </div>
             <input
-                value={search}
-                onChange={event => setSearch(event.target.value)}
+                value={searchText}
+                onChange={event => setSearchText(event.target.value)}
                 placeholder="Search by name or email"
-                className={inputClass}
+                className={INPUT_CLASS_NAME}
                 aria-label="Search users"
             />
             <div className="mt-2 max-h-60 overflow-y-auto rounded-xl bg-white px-3">
-                {matches.length === 0 ? (
+                {matchingCandidates.length === 0 ? (
                     <EmptyState>
                         {candidates.length === 0 ? "Nobody is available to add." : "No users match your search."}
                     </EmptyState>
                 ) : (
                     <ul className="divide-y divide-slate-100">
-                        {matches.map(candidate => (
+                        {matchingCandidates.map(candidate => (
                             <PersonRow key={candidate.userId} person={candidate}>
-                                <SmallButton tone="primary" disabled={busy} onClick={() => onAdd(candidate.userId)}>
+                                <SmallButton
+                                    tone="primary"
+                                    disabled={isBusy}
+                                    onClick={() => onAddPerson(candidate.userId)}
+                                >
                                     Add
                                 </SmallButton>
                             </PersonRow>

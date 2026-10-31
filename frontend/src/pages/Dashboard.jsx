@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-    getAquarium,
+    getAquariumDetail,
     getNotifications,
-    getTelemetry,
-    toChartData,
+    getTelemetryRecords,
+    toTemperatureChartData,
     triggerFeeder,
     updateFeederConfig,
     updateLightingConfig,
     updateTemperatureConfig,
-} from "../api/service";
-import AreaChart from "../components/AreaChart";
-import { Plus, Trash } from "../components/Icons";
+} from "../api/backendApi";
+import TemperatureAreaChart from "../components/TemperatureAreaChart";
+import { PlusIcon, TrashIcon } from "../components/Icons";
 import {
     Card,
     ErrorAlert,
@@ -20,80 +20,94 @@ import {
     ModeSelector,
     PageHeader,
     RangeSlider,
-    Spinner,
+    LoadingSpinner,
     StatusBadge,
-    Toggle,
-} from "../components/ui";
+    ToggleSwitch,
+} from "../components/UiKit";
 import { useAuth } from "../context/AuthContext";
-import { formatTemp, formatTempValue, relativeTime, tempUnitSymbol } from "../utils/format";
+import {
+    formatTemperature,
+    formatTemperatureValue,
+    formatRelativeTime,
+    getTemperatureUnitSymbol,
+} from "../utils/displayFormatters";
 
-const TABS = [
+// tabs
+const DASHBOARD_TABS = [
     { id: "overview", label: "Overview" },
     { id: "temperature", label: "Temperature" },
     { id: "lighting", label: "Lighting" },
     { id: "feeder", label: "Feeder" },
 ];
 
+// notification colors
 const NOTIFICATION_COLORS = {
     alert: { dot: "bg-red-500", bg: "bg-red-50", text: "text-red-700" },
     info: { dot: "bg-blue-500", bg: "bg-blue-50", text: "text-blue-700" },
     success: { dot: "bg-green-500", bg: "bg-green-50", text: "text-green-700" },
 };
 
-const EMPTY_STATE = {
+// empty state
+const EMPTY_REALTIME_STATE = {
     currentTemp: null,
     heaterStatus: "OFF",
     ledStatus: "OFF",
     feederStatus: "Idle",
     lastUpdated: null,
 };
+// default target
 const DEFAULT_TARGET_TEMP = 24;
-const REFRESH_SECONDS = 10; // Refresh dashboard; dari cache backend, jadi murah dan tidak mengikuti interval kirim perangkat
+// refresh interval
+const DASHBOARD_REFRESH_SECONDS = 10;
 
-// Format jam jadwal "hh:mm AM/PM" sesuai API
-const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
-const MINUTES = ["00", "15", "30", "45"];
+// hour options
+const SCHEDULE_HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+// minute options
+const SCHEDULE_MINUTES = ["00", "15", "30", "45"];
 
-function minutesOfDay(time) {
+// day minutes
+function toMinutesOfDay(time) {
     const [clock, period] = time.split(" ");
     const [hour, minute] = clock.split(":").map(Number);
     return ((hour % 12) + (period === "PM" ? 12 : 0)) * 60 + minute;
 }
 
-// Sama dengan server: jam selesai < jam mulai berarti melewati tengah malam
-function scheduleDuration(startTime, endTime) {
-    return Math.round((((minutesOfDay(endTime) - minutesOfDay(startTime) + 1440) % 1440) / 60) * 100) / 100;
+// schedule duration
+function calculateScheduleDurationHours(startTime, endTime) {
+    return Math.round((((toMinutesOfDay(endTime) - toMinutesOfDay(startTime) + 1440) % 1440) / 60) * 100) / 100;
 }
 
+// format hours
 const formatHours = hours => (Number.isFinite(hours) ? `${hours} hrs` : "--");
-const modeLabel = mode => (mode === "MANUAL" ? "Manual" : "Automatic");
-const toTime = value => (value ? new Date(value).getTime() : NaN);
+// mode label
+const formatModeLabel = mode => (mode === "MANUAL" ? "Manual" : "Automatic");
+// timestamp ms
+const toTimestampMs = value => (value ? new Date(value).getTime() : NaN);
 
-// Sama dengan server: offline jika tidak ada telemetry > 3x poll interval (min. 120 detik)
-function isDeviceOnline(lastUpdated, pollFrequency) {
-    const last = toTime(lastUpdated);
+// device online
+function checkDeviceOnline(lastUpdated, pollFrequency) {
+    const last = toTimestampMs(lastUpdated);
     if (!Number.isFinite(last)) return false;
     return Date.now() - last <= Math.max(120, 3 * (pollFrequency || 5)) * 1000;
 }
 
-// Feed Now dianggap selesai setelah ada telemetry yang lebih baru dari trigger
+// feed pending
 function isFeedPending(lastTriggeredAt, lastUpdated) {
-    const triggered = toTime(lastTriggeredAt);
+    const triggered = toTimestampMs(lastTriggeredAt);
     if (!Number.isFinite(triggered)) return false;
-    const updated = toTime(lastUpdated);
+    const updated = toTimestampMs(lastUpdated);
     return !Number.isFinite(updated) || triggered > updated;
 }
 
-// ---------- Komponen bersama ----------
-
+// time select
 function TimeSelect({ label, value, onChange }) {
     const [clock, period] = value.split(" ");
     const [hour, minute] = clock.split(":");
-    const minuteOptions = MINUTES.includes(minute) ? MINUTES : [...MINUTES, minute].sort();
+    const minuteOptions = SCHEDULE_MINUTES.includes(minute) ? SCHEDULE_MINUTES : [...SCHEDULE_MINUTES, minute].sort();
     const selectClass =
         "flex-1 min-w-0 py-2 text-center text-sm font-semibold text-slate-800 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400";
     const selects = [
-        ["hour", hour, HOURS, next => `${next}:${minute} ${period}`],
+        ["hour", hour, SCHEDULE_HOURS, next => `${next}:${minute} ${period}`],
         ["minute", minute, minuteOptions, next => `${hour}:${next} ${period}`],
         ["period", period, ["AM", "PM"], next => `${hour}:${minute} ${next}`],
     ];
@@ -121,7 +135,8 @@ function TimeSelect({ label, value, onChange }) {
     );
 }
 
-function AddTimeModal({ onAdd, onClose }) {
+// add modal
+function AddFeedingTimeModal({ onAddSchedule, onClose }) {
     const [hour, setHour] = useState("08");
     const [minute, setMinute] = useState("00");
     const [period, setPeriod] = useState("AM");
@@ -129,8 +144,9 @@ function AddTimeModal({ onAdd, onClose }) {
     const bigSelectClass =
         "flex-1 py-4 text-center text-2xl font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400";
 
-    const handleAdd = () => {
-        onAdd(`${hour}:${minute} ${period}`);
+    // add schedule
+    const handleAddSchedule = () => {
+        onAddSchedule(`${hour}:${minute} ${period}`);
         onClose();
     };
 
@@ -156,32 +172,32 @@ function AddTimeModal({ onAdd, onClose }) {
 
                 <div className="flex items-center justify-center gap-2 mb-6">
                     <select value={hour} onChange={event => setHour(event.target.value)} className={bigSelectClass}>
-                        {HOURS.map(h => (
-                            <option key={h} value={h}>
-                                {h}
+                        {SCHEDULE_HOURS.map(hourOption => (
+                            <option key={hourOption} value={hourOption}>
+                                {hourOption}
                             </option>
                         ))}
                     </select>
                     <span className="text-2xl font-bold text-slate-400">:</span>
                     <select value={minute} onChange={event => setMinute(event.target.value)} className={bigSelectClass}>
-                        {MINUTES.map(m => (
-                            <option key={m} value={m}>
-                                {m}
+                        {SCHEDULE_MINUTES.map(minuteOption => (
+                            <option key={minuteOption} value={minuteOption}>
+                                {minuteOption}
                             </option>
                         ))}
                     </select>
                     <div className="flex flex-col gap-1">
-                        {["AM", "PM"].map(p => (
+                        {["AM", "PM"].map(periodOption => (
                             <button
-                                key={p}
-                                onClick={() => setPeriod(p)}
+                                key={periodOption}
+                                onClick={() => setPeriod(periodOption)}
                                 className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
-                                    period === p
+                                    period === periodOption
                                         ? "bg-blue-500 text-white"
                                         : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                                 }`}
                             >
-                                {p}
+                                {periodOption}
                             </button>
                         ))}
                     </div>
@@ -202,7 +218,7 @@ function AddTimeModal({ onAdd, onClose }) {
                         Cancel
                     </button>
                     <button
-                        onClick={handleAdd}
+                        onClick={handleAddSchedule}
                         className="flex-1 py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-600 transition-colors"
                     >
                         Add Schedule
@@ -213,24 +229,35 @@ function AddTimeModal({ onAdd, onClose }) {
     );
 }
 
-function DeviceBadge({ online, lastUpdated }) {
+// device badge
+function DeviceOnlineBadge({ isOnline, lastUpdated }) {
     return (
         <span
-            title={`Last update: ${relativeTime(lastUpdated)}`}
+            title={`Last update: ${formatRelativeTime(lastUpdated)}`}
             className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                online ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"
+                isOnline ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"
             }`}
         >
-            <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-green-500" : "bg-slate-400"}`} />
-            {online ? "Device online" : lastUpdated ? "Device offline" : "No device data"}
+            <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500" : "bg-slate-400"}`} />
+            {isOnline ? "Device online" : lastUpdated ? "Device offline" : "No device data"}
         </span>
     );
 }
 
-// Tombol Turn On / Turn Off, aktif hanya di mode Manual. Tanpa `onOff` hanya satu tombol.
-// `pending` = perintah sudah disimpan tapi belum dijalankan perangkat
-function ManualControl({ state, control, manual, busy, pending, online, onOn, onOff, onLabel = "Turn On" }) {
-    const disabled = !manual || busy;
+// manual control
+function ManualControlPanel({
+    state,
+    control,
+    isManual,
+    isBusy,
+    isPending,
+    isOnline,
+    onTurnOn,
+    onTurnOff,
+    turnOnLabel = "Turn On",
+}) {
+    const disabled = !isManual || isBusy;
+    // button style
     const buttonClass = primary =>
         `py-3 rounded-xl text-sm font-semibold transition-colors ${
             disabled
@@ -245,30 +272,30 @@ function ManualControl({ state, control, manual, busy, pending, online, onOn, on
                 <InfoField label="Current State" value={state} />
                 <InfoField label="Control" value={control} />
             </div>
-            {!manual && (
+            {!isManual && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
                     Switch to Manual mode to control this device manually.
                 </p>
             )}
-            {manual && pending && (
+            {isManual && isPending && (
                 <p
                     className={`text-xs rounded-lg px-3 py-2 mb-3 border ${
-                        online
+                        isOnline
                             ? "text-blue-600 bg-blue-50 border-blue-200"
                             : "text-amber-600 bg-amber-50 border-amber-200"
                     }`}
                 >
-                    {online
+                    {isOnline
                         ? "⏳ Waiting for the device to apply this command…"
                         : "⚠️ Device is offline. The command will run when it reconnects."}
                 </p>
             )}
-            <div className={`grid gap-2 ${onOff ? "grid-cols-2" : "grid-cols-1"}`}>
-                <button onClick={onOn} disabled={disabled} className={buttonClass(true)}>
-                    {onLabel}
+            <div className={`grid gap-2 ${onTurnOff ? "grid-cols-2" : "grid-cols-1"}`}>
+                <button onClick={onTurnOn} disabled={disabled} className={buttonClass(true)}>
+                    {turnOnLabel}
                 </button>
-                {onOff && (
-                    <button onClick={onOff} disabled={disabled} className={buttonClass(false)}>
+                {onTurnOff && (
+                    <button onClick={onTurnOff} disabled={disabled} className={buttonClass(false)}>
                         Turn Off
                     </button>
                 )}
@@ -277,8 +304,7 @@ function ManualControl({ state, control, manual, busy, pending, online, onOn, on
     );
 }
 
-// ---------- Tab Overview ----------
-
+// overview tab
 function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, recentNotifications }) {
     const navigate = useNavigate();
     const { unit } = aquarium.tempConfig;
@@ -291,13 +317,18 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                 <p className="text-xs font-semibold text-slate-500 mb-1">Real-time water temperature</p>
                 <div className="flex items-baseline gap-1 mb-3">
                     <span className="text-5xl font-bold text-blue-600">
-                        {formatTempValue(realtimeState.currentTemp, unit)}
+                        {formatTemperatureValue(realtimeState.currentTemp, unit)}
                     </span>
-                    {hasTemp && <span className="text-xl text-blue-400 font-semibold">{tempUnitSymbol(unit)}</span>}
+                    {hasTemp && (
+                        <span className="text-xl text-blue-400 font-semibold">{getTemperatureUnitSymbol(unit)}</span>
+                    )}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                    <InfoField label="Target temperature" value={formatTemp(aquarium.tempConfig.targetTemp, unit)} />
-                    <InfoField label="Last update" value={relativeTime(realtimeState.lastUpdated)} />
+                    <InfoField
+                        label="Target temperature"
+                        value={formatTemperature(aquarium.tempConfig.targetTemp, unit)}
+                    />
+                    <InfoField label="Last update" value={formatRelativeTime(realtimeState.lastUpdated)} />
                 </div>
             </Card>
 
@@ -328,8 +359,10 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                     <div>
                         <p className="text-xs font-semibold text-slate-500">Temperature Monitor · Last 12 readings</p>
                         <span className="text-3xl font-bold text-blue-600">
-                            {formatTempValue(realtimeState.currentTemp, unit)}{" "}
-                            {hasTemp && <span className="text-base text-blue-400">{tempUnitSymbol(unit)}</span>}
+                            {formatTemperatureValue(realtimeState.currentTemp, unit)}{" "}
+                            {hasTemp && (
+                                <span className="text-base text-blue-400">{getTemperatureUnitSymbol(unit)}</span>
+                            )}
                         </span>
                     </div>
                     {chartData.length > 0 && (
@@ -341,7 +374,7 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                             ].map(([label, value]) => (
                                 <div key={label}>
                                     <div className="text-xs font-bold text-blue-500">
-                                        {formatTemp(+value.toFixed(1), unit)}
+                                        {formatTemperature(+value.toFixed(1), unit)}
                                     </div>
                                     <div className="text-[10px] text-slate-400">{label}</div>
                                 </div>
@@ -349,7 +382,7 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                         </div>
                     )}
                 </div>
-                <AreaChart data={chartData} height={220} />
+                <TemperatureAreaChart data={chartData} height={220} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -372,11 +405,13 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                             >
                                 <div className="min-w-0">
                                     <div className="text-xs font-semibold text-slate-700 truncate">{record.event}</div>
-                                    <div className="text-[10px] text-slate-400">{relativeTime(record.timestamp)}</div>
+                                    <div className="text-[10px] text-slate-400">
+                                        {formatRelativeTime(record.timestamp)}
+                                    </div>
                                 </div>
                                 <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                                     <span className="text-sm font-bold text-blue-600">
-                                        {formatTemp(record.temp, unit)}
+                                        {formatTemperature(record.temp, unit)}
                                     </span>
                                     <StatusBadge status={record.heaterState} />
                                 </div>
@@ -415,7 +450,7 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
                                             )}
                                         </div>
                                         <div className="text-[10px] text-slate-400">
-                                            {relativeTime(notification.timestamp)}
+                                            {formatRelativeTime(notification.timestamp)}
                                         </div>
                                     </div>
                                     <span
@@ -433,17 +468,18 @@ function OverviewTab({ aquarium, realtimeState, chartData, recentTelemetry, rece
     );
 }
 
-// ---------- Tab Temperature ----------
-
-function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving }) {
+// temperature tab
+function TemperatureTab({ aquarium, realtimeState, isDeviceOnline, saveAquariumSection, isSaving }) {
     const { tempConfig, hardwareInfo } = aquarium;
     const isManual = tempConfig.mode === "MANUAL";
-    // Draft lokal agar auto-refresh tidak menimpa slider yang sedang digeser
+    // draft state
     const [targetDraft, setTargetDraft] = useState(null);
     const targetTemp = targetDraft ?? tempConfig.targetTemp;
-    const saveTemperature = patch => patchAquarium("tempConfig", patch, updateTemperatureConfig);
-    const saveTarget = async () => {
-        if (await saveTemperature({ targetTemp })) setTargetDraft(null);
+    // save config
+    const saveTemperatureConfig = patch => saveAquariumSection("tempConfig", patch, updateTemperatureConfig);
+    // save target
+    const saveTargetTemp = async () => {
+        if (await saveTemperatureConfig({ targetTemp })) setTargetDraft(null);
     };
 
     return (
@@ -451,10 +487,10 @@ function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, 
             <Card>
                 <p className="text-xs font-semibold text-slate-500 mb-1">Live Water Temperature</p>
                 <div className="text-4xl font-bold text-blue-600 mb-3">
-                    {formatTemp(realtimeState.currentTemp, tempConfig.unit)}
+                    {formatTemperature(realtimeState.currentTemp, tempConfig.unit)}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                    <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
+                    <InfoField label="Last Update" value={formatRelativeTime(realtimeState.lastUpdated)} />
                     <InfoField label="Sensor" value={hardwareInfo?.tempSensor} />
                 </div>
             </Card>
@@ -472,8 +508,8 @@ function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, 
                     {realtimeState.heaterStatus}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                    <InfoField label="Mode" value={modeLabel(tempConfig.mode)} />
-                    <InfoField label="Last Update" value={relativeTime(realtimeState.lastUpdated)} />
+                    <InfoField label="Mode" value={formatModeLabel(tempConfig.mode)} />
+                    <InfoField label="Last Update" value={formatRelativeTime(realtimeState.lastUpdated)} />
                 </div>
             </Card>
 
@@ -481,20 +517,20 @@ function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, 
                 <p className="text-sm font-semibold text-slate-700 mb-3">Target Temperature</p>
                 <RangeSlider
                     label="Target"
-                    valueLabel={formatTemp(targetTemp, tempConfig.unit)}
+                    valueLabel={formatTemperature(targetTemp, tempConfig.unit)}
                     value={targetTemp}
                     min={18}
                     max={30}
                     step={0.5}
-                    minLabel={formatTemp(18, tempConfig.unit)}
-                    maxLabel={formatTemp(30, tempConfig.unit)}
+                    minLabel={formatTemperature(18, tempConfig.unit)}
+                    maxLabel={formatTemperature(30, tempConfig.unit)}
                     disabled={!Number.isFinite(targetTemp)}
                     onChange={setTargetDraft}
                 />
                 <div className="flex gap-2 mt-4">
                     <button
-                        onClick={saveTarget}
-                        disabled={!Number.isFinite(targetTemp) || targetTemp === tempConfig.targetTemp || saving}
+                        onClick={saveTargetTemp}
+                        disabled={!Number.isFinite(targetTemp) || targetTemp === tempConfig.targetTemp || isSaving}
                         className="flex-1 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-60"
                     >
                         Save
@@ -512,40 +548,40 @@ function TemperatureTab({ aquarium, realtimeState, deviceOnline, patchAquarium, 
                 <p className="text-sm font-semibold text-slate-700 mb-3">Heater Mode</p>
                 <ModeSelector
                     mode={tempConfig.mode.toLowerCase()}
-                    onMode={mode => saveTemperature({ mode: mode.toUpperCase() })}
+                    onModeChange={mode => saveTemperatureConfig({ mode: mode.toUpperCase() })}
                 />
             </Card>
 
             <Card>
                 <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                <ManualControl
+                <ManualControlPanel
                     state={realtimeState.heaterStatus === "ON" ? "Running" : "Idle"}
-                    control={modeLabel(tempConfig.mode)}
-                    manual={isManual}
-                    busy={saving}
-                    pending={tempConfig.manualControlState !== realtimeState.heaterStatus}
-                    online={deviceOnline}
-                    onOn={() => saveTemperature({ manualControlState: "ON" })}
-                    onOff={() => saveTemperature({ manualControlState: "OFF" })}
+                    control={formatModeLabel(tempConfig.mode)}
+                    isManual={isManual}
+                    isBusy={isSaving}
+                    isPending={tempConfig.manualControlState !== realtimeState.heaterStatus}
+                    isOnline={isDeviceOnline}
+                    onTurnOn={() => saveTemperatureConfig({ manualControlState: "ON" })}
+                    onTurnOff={() => saveTemperatureConfig({ manualControlState: "OFF" })}
                 />
             </Card>
         </div>
     );
 }
 
-// ---------- Tab Lighting ----------
-
+// schedule card
 function LightingScheduleCard({ schedule, disabled, onSave }) {
-    const [draft, setDraft] = useState({
+    // draft state
+    const [scheduleDraft, setScheduleDraft] = useState({
         startTime: schedule.startTime || "08:00 AM",
         endTime: schedule.endTime || "10:00 PM",
         isActive: Boolean(schedule.isActive),
     });
-    const sameTime = draft.startTime === draft.endTime;
-    const changed =
-        draft.startTime !== schedule.startTime ||
-        draft.endTime !== schedule.endTime ||
-        draft.isActive !== Boolean(schedule.isActive);
+    const isSameTime = scheduleDraft.startTime === scheduleDraft.endTime;
+    const hasChanges =
+        scheduleDraft.startTime !== schedule.startTime ||
+        scheduleDraft.endTime !== schedule.endTime ||
+        scheduleDraft.isActive !== Boolean(schedule.isActive);
 
     return (
         <Card>
@@ -553,35 +589,40 @@ function LightingScheduleCard({ schedule, disabled, onSave }) {
                 <p className="text-sm font-semibold text-slate-700">Schedule</p>
                 <div className="flex items-center gap-2">
                     <span className="text-xs font-semibold text-slate-500">
-                        {draft.isActive ? "Active" : "Inactive"}
+                        {scheduleDraft.isActive ? "Active" : "Inactive"}
                     </span>
-                    <Toggle
-                        checked={draft.isActive}
+                    <ToggleSwitch
+                        checked={scheduleDraft.isActive}
                         label="Lighting schedule active"
-                        onChange={isActive => setDraft(current => ({ ...current, isActive }))}
+                        onChange={isActive => setScheduleDraft(current => ({ ...current, isActive }))}
                     />
                 </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 <TimeSelect
                     label="Start Time"
-                    value={draft.startTime}
-                    onChange={startTime => setDraft(current => ({ ...current, startTime }))}
+                    value={scheduleDraft.startTime}
+                    onChange={startTime => setScheduleDraft(current => ({ ...current, startTime }))}
                 />
                 <TimeSelect
                     label="End Time"
-                    value={draft.endTime}
-                    onChange={endTime => setDraft(current => ({ ...current, endTime }))}
+                    value={scheduleDraft.endTime}
+                    onChange={endTime => setScheduleDraft(current => ({ ...current, endTime }))}
                 />
             </div>
-            <p className={`text-xs mb-3 ${sameTime ? "text-red-500" : "text-slate-400"}`}>
-                {sameTime
+            <p className={`text-xs mb-3 ${isSameTime ? "text-red-500" : "text-slate-400"}`}>
+                {isSameTime
                     ? "Start and end time must differ."
-                    : `The LED stays on for ${scheduleDuration(draft.startTime, draft.endTime)} hrs in Automatic mode.`}
+                    : `The LED stays on for ${calculateScheduleDurationHours(scheduleDraft.startTime, scheduleDraft.endTime)} hrs in Automatic mode.`}
             </p>
             <button
-                onClick={() => onSave({ ...draft, durationHours: scheduleDuration(draft.startTime, draft.endTime) })}
-                disabled={disabled || sameTime || !changed}
+                onClick={() =>
+                    onSave({
+                        ...scheduleDraft,
+                        durationHours: calculateScheduleDurationHours(scheduleDraft.startTime, scheduleDraft.endTime),
+                    })
+                }
+                disabled={disabled || isSameTime || !hasChanges}
                 className="w-full py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
                 Save Schedule
@@ -590,10 +631,12 @@ function LightingScheduleCard({ schedule, disabled, onSave }) {
     );
 }
 
-function LightingTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving }) {
+// lighting tab
+function LightingTab({ aquarium, realtimeState, isDeviceOnline, saveAquariumSection, isSaving }) {
     const { lightingConfig } = aquarium;
     const { schedule } = lightingConfig;
-    const saveLighting = patch => patchAquarium("lightingConfig", patch, updateLightingConfig);
+    // save config
+    const saveLightingConfig = patch => saveAquariumSection("lightingConfig", patch, updateLightingConfig);
 
     return (
         <div className="space-y-4">
@@ -609,19 +652,17 @@ function LightingTab({ aquarium, realtimeState, deviceOnline, patchAquarium, sav
                 >
                     ☀️ {realtimeState.ledStatus}
                 </div>
-                {/* Dihitung server dari telemetry 7 hari terakhir */}
                 <div className="grid grid-cols-2 gap-2">
                     <InfoField label="Avg. Hours ON" value={formatHours(lightingConfig.avgHoursOn)} />
                     <InfoField label="Avg. Hours OFF" value={formatHours(lightingConfig.avgHoursOff)} />
                 </div>
             </Card>
 
-            {/* key: form di-reset hanya jika jadwal di server berubah */}
             <LightingScheduleCard
                 key={`${schedule.startTime}-${schedule.endTime}-${schedule.isActive}`}
                 schedule={schedule}
-                disabled={saving}
-                onSave={nextSchedule => saveLighting({ schedule: nextSchedule })}
+                disabled={isSaving}
+                onSave={nextSchedule => saveLightingConfig({ schedule: nextSchedule })}
             />
 
             <Card>
@@ -632,7 +673,7 @@ function LightingTab({ aquarium, realtimeState, deviceOnline, patchAquarium, sav
                     <InfoField label="Duration" value={formatHours(schedule.durationHours)} />
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                    <InfoField label="Mode" value={modeLabel(lightingConfig.mode)} />
+                    <InfoField label="Mode" value={formatModeLabel(lightingConfig.mode)} />
                     <InfoField label="State" value={realtimeState.ledStatus} />
                     <InfoField label="Schedule" value={schedule.isActive ? "Active" : "Off"} />
                 </div>
@@ -642,41 +683,41 @@ function LightingTab({ aquarium, realtimeState, deviceOnline, patchAquarium, sav
                 <p className="text-sm font-semibold text-slate-700 mb-3">LED Mode</p>
                 <ModeSelector
                     mode={lightingConfig.mode.toLowerCase()}
-                    onMode={mode => saveLighting({ mode: mode.toUpperCase() })}
+                    onModeChange={mode => saveLightingConfig({ mode: mode.toUpperCase() })}
                 />
             </Card>
 
             <Card>
                 <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                <ManualControl
+                <ManualControlPanel
                     state={realtimeState.ledStatus === "ON" ? "Running" : "Idle"}
-                    control={modeLabel(lightingConfig.mode)}
-                    manual={lightingConfig.mode === "MANUAL"}
-                    busy={saving}
-                    pending={lightingConfig.manualControlState !== realtimeState.ledStatus}
-                    online={deviceOnline}
-                    onOn={() => saveLighting({ manualControlState: "ON" })}
-                    onOff={() => saveLighting({ manualControlState: "OFF" })}
+                    control={formatModeLabel(lightingConfig.mode)}
+                    isManual={lightingConfig.mode === "MANUAL"}
+                    isBusy={isSaving}
+                    isPending={lightingConfig.manualControlState !== realtimeState.ledStatus}
+                    isOnline={isDeviceOnline}
+                    onTurnOn={() => saveLightingConfig({ manualControlState: "ON" })}
+                    onTurnOff={() => saveLightingConfig({ manualControlState: "OFF" })}
                 />
             </Card>
         </div>
     );
 }
 
-// ---------- Tab Feeder ----------
-
-function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, saving, onFeedNow }) {
+// feeder tab
+function FeederTab({ aquarium, realtimeState, isDeviceOnline, saveAquariumSection, isSaving, onFeedNow }) {
     const { feederConfig } = aquarium;
     const feedPending = isFeedPending(feederConfig.lastTriggeredAt, realtimeState.lastUpdated);
-    const [showAddTime, setShowAddTime] = useState(false);
-    const saveSchedules = schedules => patchAquarium("feederConfig", { schedules }, updateFeederConfig);
+    const [isAddTimeModalOpen, setIsAddTimeModalOpen] = useState(false);
+    // save schedules
+    const saveFeedingSchedules = schedules => saveAquariumSection("feederConfig", { schedules }, updateFeederConfig);
 
     return (
         <div className="space-y-4">
-            {showAddTime && (
-                <AddTimeModal
-                    onAdd={time => saveSchedules([...feederConfig.schedules, { time, isActive: true }])}
-                    onClose={() => setShowAddTime(false)}
+            {isAddTimeModalOpen && (
+                <AddFeedingTimeModal
+                    onAddSchedule={time => saveFeedingSchedules([...feederConfig.schedules, { time, isActive: true }])}
+                    onClose={() => setIsAddTimeModalOpen(false)}
                 />
             )}
 
@@ -698,39 +739,41 @@ function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, savin
                 <p className="text-sm font-semibold text-slate-700 mb-3">Feeder Mode</p>
                 <ModeSelector
                     mode={feederConfig.mode.toLowerCase()}
-                    onMode={mode => patchAquarium("feederConfig", { mode: mode.toUpperCase() }, updateFeederConfig)}
+                    onModeChange={mode =>
+                        saveAquariumSection("feederConfig", { mode: mode.toUpperCase() }, updateFeederConfig)
+                    }
                 />
             </Card>
 
             <Card>
                 <p className="text-sm font-semibold text-slate-700 mb-3">Manual Control</p>
-                <ManualControl
+                <ManualControlPanel
                     state={realtimeState.feederStatus}
-                    control={modeLabel(feederConfig.mode)}
-                    manual={feederConfig.mode === "MANUAL"}
-                    busy={saving || feedPending}
-                    pending={feedPending}
-                    online={deviceOnline}
-                    onLabel="Feed Now"
-                    onOn={onFeedNow}
+                    control={formatModeLabel(feederConfig.mode)}
+                    isManual={feederConfig.mode === "MANUAL"}
+                    isBusy={isSaving || feedPending}
+                    isPending={feedPending}
+                    isOnline={isDeviceOnline}
+                    turnOnLabel="Feed Now"
+                    onTurnOn={onFeedNow}
                 />
             </Card>
 
             <Card>
                 <p className="text-sm font-semibold text-slate-700 mb-3">Feeding Schedule</p>
                 <div className="space-y-3">
-                    {feederConfig.schedules.map((entry, index) => (
+                    {feederConfig.schedules.map((feedingSchedule, index) => (
                         <div
-                            key={entry.time}
+                            key={feedingSchedule.time}
                             className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
                         >
-                            <span className="text-sm text-slate-700 font-medium">{entry.time}</span>
+                            <span className="text-sm text-slate-700 font-medium">{feedingSchedule.time}</span>
                             <div className="flex items-center gap-3">
-                                <Toggle
-                                    checked={entry.isActive}
-                                    label={`Feeding at ${entry.time}`}
+                                <ToggleSwitch
+                                    checked={feedingSchedule.isActive}
+                                    label={`Feeding at ${feedingSchedule.time}`}
                                     onChange={() =>
-                                        saveSchedules(
+                                        saveFeedingSchedules(
                                             feederConfig.schedules.map((item, i) =>
                                                 i === index ? { ...item, isActive: !item.isActive } : item,
                                             ),
@@ -738,20 +781,22 @@ function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, savin
                                     }
                                 />
                                 <button
-                                    onClick={() => saveSchedules(feederConfig.schedules.filter((_, i) => i !== index))}
-                                    aria-label={`Delete feeding time ${entry.time}`}
+                                    onClick={() =>
+                                        saveFeedingSchedules(feederConfig.schedules.filter((_, i) => i !== index))
+                                    }
+                                    aria-label={`Delete feeding time ${feedingSchedule.time}`}
                                     className="text-slate-300 hover:text-red-400 transition-colors p-1"
                                 >
-                                    <Trash />
+                                    <TrashIcon />
                                 </button>
                             </div>
                         </div>
                     ))}
                     <button
-                        onClick={() => setShowAddTime(true)}
+                        onClick={() => setIsAddTimeModalOpen(true)}
                         className="flex items-center gap-2 text-blue-500 text-sm font-semibold hover:text-blue-600 transition-colors pt-1"
                     >
-                        <Plus /> Add feeding time
+                        <PlusIcon /> Add feeding time
                     </button>
                 </div>
             </Card>
@@ -759,23 +804,24 @@ function FeederTab({ aquarium, realtimeState, deviceOnline, patchAquarium, savin
     );
 }
 
-// ---------- Halaman ----------
-
-export default function DashboardPage({ onSystemChange }) {
-    const { tab = "overview" } = useParams();
+// dashboard page
+export default function DashboardPage({ onSuccessNotice }) {
+    const { tab: tabIdFromRoute = "overview" } = useParams();
     const navigate = useNavigate();
-    const { user, activeAquariumId: AQUARIUM_ID, canControl, isViewer } = useAuth();
+    const { user, activeAquariumId, canControlAquarium, isViewer } = useAuth();
 
+    // state
     const [aquarium, setAquarium] = useState(null);
     const [chartData, setChartData] = useState([]);
     const [recentTelemetry, setRecentTelemetry] = useState([]);
     const [recentNotifications, setRecentNotifications] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [actionError, setActionError] = useState("");
-    const [saving, setSaving] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const isMounted = useRef(true);
 
+    // mount flag
     useEffect(() => {
         isMounted.current = true;
         return () => {
@@ -783,80 +829,81 @@ export default function DashboardPage({ onSystemChange }) {
         };
     }, []);
 
-    // Ambil config, status perangkat, grafik, dan data terbaru sekaligus
-    const refresh = useCallback(async () => {
-        // Satu permintaan telemetry untuk grafik (12) dan daftar terbaru (5)
+    // refresh data
+    const refreshDashboardData = useCallback(async () => {
         const [aquariumData, telemetry, notifications] = await Promise.all([
-            getAquarium(AQUARIUM_ID),
-            getTelemetry(AQUARIUM_ID, { limit: 12 }),
-            getNotifications(AQUARIUM_ID, { limit: 5 }),
+            getAquariumDetail(activeAquariumId),
+            getTelemetryRecords(activeAquariumId, { limit: 12 }),
+            getNotifications(activeAquariumId, { limit: 5 }),
         ]);
         if (!isMounted.current) return;
         setAquarium(aquariumData);
-        setChartData(toChartData(telemetry.telemetryRecords));
+        setChartData(toTemperatureChartData(telemetry.telemetryRecords));
         setRecentTelemetry(telemetry.telemetryRecords.slice(0, 5));
         setRecentNotifications(notifications.notificationRecords.slice(0, 5));
-    }, [AQUARIUM_ID]);
+    }, [activeAquariumId]);
 
+    // initial load
     useEffect(() => {
-        refresh()
+        refreshDashboardData()
             .catch(error => isMounted.current && setLoadError(error.message || "Could not load the dashboard."))
-            .finally(() => isMounted.current && setLoading(false));
-    }, [refresh]);
+            .finally(() => isMounted.current && setIsLoading(false));
+    }, [refreshDashboardData]);
 
-    // Auto-refresh tiap REFRESH_SECONDS, dijeda saat tab browser tidak aktif
     const pollFrequency = aquarium?.systemConfig?.pollFrequency;
     const isLoaded = Boolean(aquarium);
+    // auto refresh
     useEffect(() => {
         if (!isLoaded) return undefined;
         const intervalId = window.setInterval(() => {
             if (document.visibilityState !== "visible") return;
-            refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
-        }, REFRESH_SECONDS * 1000);
+            refreshDashboardData().catch(error => console.warn("Unable to refresh the dashboard.", error));
+        }, DASHBOARD_REFRESH_SECONDS * 1000);
         return () => window.clearInterval(intervalId);
-    }, [isLoaded, refresh]);
+    }, [isLoaded, refreshDashboardData]);
 
-    // Jalankan aksi API, tampilkan toast, lalu muat ulang data. Mengembalikan true jika berhasil
-    const runAction = async (action, successMessage, failureMessage) => {
+    // run action
+    const runDashboardAction = async (action, successMessage, failureMessage) => {
         setActionError("");
-        setSaving(true);
+        setIsSaving(true);
         try {
             await action();
-            onSystemChange?.(successMessage);
-            await refresh().catch(error => console.warn("Unable to refresh the dashboard.", error));
+            onSuccessNotice?.(successMessage);
+            await refreshDashboardData().catch(error => console.warn("Unable to refresh the dashboard.", error));
             return true;
         } catch (error) {
             setActionError(error.message || failureMessage);
             return false;
         } finally {
-            setSaving(false);
+            setIsSaving(false);
         }
     };
 
-    // Simpan config; state lokal langsung disamakan sebelum data dimuat ulang
-    const patchAquarium = (section, patch, apiCall) =>
-        runAction(
+    // save section
+    const saveAquariumSection = (section, patch, apiCall) =>
+        runDashboardAction(
             async () => {
-                await apiCall(AQUARIUM_ID, patch);
+                await apiCall(activeAquariumId, patch);
                 setAquarium(current => ({ ...current, [section]: { ...current[section], ...patch } }));
             },
             "Aquarium configuration updated successfully.",
             "Could not update the aquarium setting.",
         );
 
+    // feed now
     const handleFeedNow = () =>
-        runAction(
-            () => triggerFeeder(AQUARIUM_ID),
+        runDashboardAction(
+            () => triggerFeeder(activeAquariumId),
             "Feed command sent to the device.",
             "Could not trigger the feeder.",
         );
 
-    if (loading || loadError || !aquarium) {
+    if (isLoading || loadError || !aquarium) {
         return (
             <div className="px-4 py-6">
                 <PageHeader title="Dashboard" subtitle={user?.fullName && `Welcome, ${user.fullName}`} />
-                {loading ? (
-                    <Spinner />
+                {isLoading ? (
+                    <LoadingSpinner />
                 ) : loadError ? (
                     <ErrorAlert message={loadError} />
                 ) : (
@@ -866,11 +913,11 @@ export default function DashboardPage({ onSystemChange }) {
         );
     }
 
-    // Status aktual perangkat; hanya diisi telemetry ESP32
-    const realtimeState = { ...EMPTY_STATE, ...aquarium.realtimeState };
-    const deviceOnline = isDeviceOnline(realtimeState.lastUpdated, pollFrequency);
-    const activeTab = TABS.some(item => item.id === tab) ? tab : "overview";
-    const tabProps = { aquarium, realtimeState, deviceOnline, patchAquarium, saving };
+    // derived state
+    const realtimeState = { ...EMPTY_REALTIME_STATE, ...aquarium.realtimeState };
+    const isDeviceOnline = checkDeviceOnline(realtimeState.lastUpdated, pollFrequency);
+    const activeTab = DASHBOARD_TABS.some(item => item.id === tabIdFromRoute) ? tabIdFromRoute : "overview";
+    const controlTabProps = { aquarium, realtimeState, isDeviceOnline, saveAquariumSection, isSaving };
 
     return (
         <div className="px-4 py-5">
@@ -884,15 +931,15 @@ export default function DashboardPage({ onSystemChange }) {
             <div className="flex items-center justify-between gap-3 mb-4">
                 <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-2xl font-bold text-slate-800">
-                        {TABS.find(item => item.id === activeTab).label}
+                        {DASHBOARD_TABS.find(item => item.id === activeTab).label}
                     </h1>
-                    <DeviceBadge online={deviceOnline} lastUpdated={realtimeState.lastUpdated} />
+                    <DeviceOnlineBadge isOnline={isDeviceOnline} lastUpdated={realtimeState.lastUpdated} />
                 </div>
                 <LiveClock timezone={aquarium.systemConfig.timezone} />
             </div>
 
             <div className="flex gap-1 overflow-x-auto pb-1 mb-5 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
-                {TABS.map(item => (
+                {DASHBOARD_TABS.map(item => (
                     <button
                         key={item.id}
                         onClick={() =>
@@ -918,11 +965,11 @@ export default function DashboardPage({ onSystemChange }) {
                     recentNotifications={recentNotifications}
                 />
             )}
-            {/* Member hanya melihat: semua kontrol di bawah dimatikan (backend juga menolak dengan 403) */}
-            <fieldset disabled={!canControl} className="m-0 min-w-0 border-0 p-0">
-                {activeTab === "temperature" && <TemperatureTab {...tabProps} />}
-                {activeTab === "lighting" && <LightingTab {...tabProps} />}
-                {activeTab === "feeder" && <FeederTab {...tabProps} onFeedNow={handleFeedNow} />}
+            {/* disable controls */}
+            <fieldset disabled={!canControlAquarium} className="m-0 min-w-0 border-0 p-0">
+                {activeTab === "temperature" && <TemperatureTab {...controlTabProps} />}
+                {activeTab === "lighting" && <LightingTab {...controlTabProps} />}
+                {activeTab === "feeder" && <FeederTab {...controlTabProps} onFeedNow={handleFeedNow} />}
             </fieldset>
         </div>
     );

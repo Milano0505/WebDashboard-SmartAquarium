@@ -4,12 +4,14 @@ import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
+// root element
 const rootElement = document.getElementById("root");
 
 if (!rootElement) {
     throw new Error("Root element not found");
 }
 
+// render app
 ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
         <ErrorBoundary>

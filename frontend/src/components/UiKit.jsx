@@ -1,14 +1,12 @@
-// Komponen UI dasar yang dipakai semua halaman
 import { useEffect, useState } from "react";
 
-// ---------- Tampilan ----------
-
-// Jam dan tanggal sesuai timezone akuarium, update tiap detik
+// live clock
 export function LiveClock({ timezone = "Asia/Manila" }) {
+    // clock state
     const [now, setNow] = useState(new Date());
     useEffect(() => {
-        const id = setInterval(() => setNow(new Date()), 1000);
-        return () => clearInterval(id);
+        const intervalId = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(intervalId);
     }, []);
 
     let datePart;
@@ -41,7 +39,8 @@ export function LiveClock({ timezone = "Asia/Manila" }) {
     );
 }
 
-export function Toggle({ checked, onChange, disabled = false, label }) {
+// toggle switch
+export function ToggleSwitch({ checked, onChange, disabled = false, label }) {
     return (
         <button
             type="button"
@@ -63,20 +62,22 @@ export function Toggle({ checked, onChange, disabled = false, label }) {
     );
 }
 
+// status badge
 export function StatusBadge({ status }) {
-    const on = status === "ON" || status === "Active" || status === "Running";
+    const isOn = status === "ON" || status === "Active" || status === "Running";
     return (
         <span
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                on ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
+                isOn ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
             }`}
         >
-            <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-green-500" : "bg-slate-400"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${isOn ? "bg-green-500" : "bg-slate-400"}`} />
             {status ?? "--"}
         </span>
     );
 }
 
+// info field
 export function InfoField({ label, value }) {
     return (
         <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
@@ -88,13 +89,13 @@ export function InfoField({ label, value }) {
     );
 }
 
+// card
 export function Card({ children, className = "" }) {
     return <div className={`bg-white rounded-2xl border border-slate-200 p-4 ${className}`}>{children}</div>;
 }
 
-// ---------- Tombol & input ----------
-
-export function PrimaryBtn({ children, onClick, disabled, className = "", type = "button" }) {
+// primary button
+export function PrimaryButton({ children, onClick, disabled, className = "", type = "button" }) {
     return (
         <button
             type={type}
@@ -107,14 +108,15 @@ export function PrimaryBtn({ children, onClick, disabled, className = "", type =
     );
 }
 
+// input field
 export function InputField({
     label,
-    icon: Icon,
+    icon: LeadingIcon,
     type = "text",
     value,
     onChange,
     placeholder,
-    right,
+    rightSlot,
     required,
     readOnly = false,
     hint,
@@ -128,9 +130,9 @@ export function InputField({
                 </label>
             )}
             <div className="relative">
-                {Icon && (
+                {LeadingIcon && (
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Icon />
+                        <LeadingIcon />
                     </span>
                 )}
                 <input
@@ -139,20 +141,20 @@ export function InputField({
                     onChange={onChange}
                     placeholder={placeholder}
                     readOnly={readOnly}
-                    className={`w-full ${Icon ? "pl-10" : "pl-3"} ${
-                        right ? "pr-10" : "pr-3"
+                    className={`w-full ${LeadingIcon ? "pl-10" : "pl-3"} ${
+                        rightSlot ? "pr-10" : "pr-3"
                     } py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent ${
                         readOnly ? "bg-slate-50 text-slate-500 cursor-not-allowed" : "bg-white"
                     }`}
                 />
-                {right && <span className="absolute right-3 top-1/2 -translate-y-1/2">{right}</span>}
+                {rightSlot && <span className="absolute right-3 top-1/2 -translate-y-1/2">{rightSlot}</span>}
             </div>
             {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
         </div>
     );
 }
 
-// Slider berlabel; track terisi sampai nilai saat ini
+// range slider
 export function RangeSlider({
     label,
     valueLabel,
@@ -194,29 +196,28 @@ export function RangeSlider({
     );
 }
 
-// Pilihan mode Manual / Automatic untuk heater, LED, dan feeder
-export function ModeSelector({ mode, onMode }) {
+// mode selector
+export function ModeSelector({ mode, onModeChange }) {
     return (
         <div className="flex gap-2">
-            {["manual", "automatic"].map(m => (
+            {["manual", "automatic"].map(modeOption => (
                 <button
-                    key={m}
-                    onClick={() => onMode(m)}
+                    key={modeOption}
+                    onClick={() => onModeChange(modeOption)}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                        mode === m
+                        mode === modeOption
                             ? "bg-blue-500 text-white shadow-sm"
                             : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                     }`}
                 >
-                    {m === "manual" ? "⚙️ Manual" : "🤖 Automatic"}
+                    {modeOption === "manual" ? "⚙️ Manual" : "🤖 Automatic"}
                 </button>
             ))}
         </div>
     );
 }
 
-// ---------- Pesan & layout ----------
-
+// error alert
 export function ErrorAlert({ message }) {
     if (!message) return null;
     return (
@@ -227,6 +228,7 @@ export function ErrorAlert({ message }) {
     );
 }
 
+// success alert
 export function SuccessAlert({ message }) {
     if (!message) return null;
     return (
@@ -237,7 +239,8 @@ export function SuccessAlert({ message }) {
     );
 }
 
-export function PageHeader({ title, subtitle, right, timezone }) {
+// page header
+export function PageHeader({ title, subtitle, rightSlot, timezone }) {
     return (
         <div className="flex items-start justify-between mb-4">
             <div>
@@ -246,13 +249,14 @@ export function PageHeader({ title, subtitle, right, timezone }) {
             </div>
             <div className="flex items-center gap-3 flex-shrink-0 ml-3">
                 {timezone && <LiveClock timezone={timezone} />}
-                {right && <div>{right}</div>}
+                {rightSlot && <div>{rightSlot}</div>}
             </div>
         </div>
     );
 }
 
-export function Spinner() {
+// loading spinner
+export function LoadingSpinner() {
     return (
         <div className="flex items-center justify-center py-12">
             <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />

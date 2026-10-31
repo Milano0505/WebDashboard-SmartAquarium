@@ -1,103 +1,111 @@
 import { useEffect, useState } from "react";
 import {
     deleteNotification,
-    getAquarium,
+    getAquariumDetail,
     getNotifications,
     markAllNotificationsRead,
     markNotificationRead,
-} from "../api/service";
-import { Check, Trash } from "../components/Icons";
-import { ErrorAlert, PageHeader, Spinner } from "../components/ui";
+} from "../api/backendApi";
+import { CheckIcon, TrashIcon } from "../components/Icons";
+import { ErrorAlert, PageHeader, LoadingSpinner } from "../components/UiKit";
 import { useAuth } from "../context/AuthContext";
-import { relativeTime } from "../utils/format";
+import { formatRelativeTime } from "../utils/displayFormatters";
 
-// ---------- Konstanta ----------
-
-const TYPE_STYLES = {
+// type styles
+const NOTIFICATION_TYPE_STYLES = {
     alert: { emoji: "🔴", bg: "bg-red-50", border: "border-red-200", badge: "bg-red-100 text-red-700" },
     info: { emoji: "🔵", bg: "bg-blue-50", border: "border-blue-200", badge: "bg-blue-100 text-blue-700" },
     success: { emoji: "🟢", bg: "bg-green-50", border: "border-green-200", badge: "bg-green-100 text-green-700" },
 };
 
-const TYPE_COUNTERS = [
+// type counters
+const NOTIFICATION_TYPE_COUNTERS = [
     ["alert", "Alerts", "bg-red-50 text-red-600 border border-red-200"],
     ["info", "Info", "bg-blue-50 text-blue-600 border border-blue-200"],
     ["success", "Success", "bg-green-50 text-green-600 border border-green-200"],
 ];
 
-// ---------- Halaman ----------
-
-export default function NotificationsPage({ onCountChange, onSystemChange }) {
-    const { activeAquariumId: AQUARIUM_ID } = useAuth();
-    const [items, setItems] = useState([]);
+// notifications page
+export default function NotificationsPage({ onUnreadCountChange, onSuccessNotice }) {
+    const { activeAquariumId } = useAuth();
+    // state
+    const [notifications, setNotifications] = useState([]);
     const [timezone, setTimezone] = useState("Asia/Manila");
-    const [loading, setLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [actionError, setActionError] = useState("");
-    const [actionLoading, setActionLoading] = useState(false);
+    const [isActionLoading, setIsActionLoading] = useState(false);
 
+    // fetch notifications
     useEffect(() => {
         let isMounted = true;
-        Promise.all([getNotifications(AQUARIUM_ID, { limit: 500 }), getAquarium(AQUARIUM_ID)])
-            .then(([notifications, aquarium]) => {
+        Promise.all([getNotifications(activeAquariumId, { limit: 500 }), getAquariumDetail(activeAquariumId)])
+            .then(([notificationResult, aquarium]) => {
                 if (!isMounted) return;
-                setItems(notifications.notificationRecords);
+                setNotifications(notificationResult.notificationRecords);
                 setTimezone(aquarium?.systemConfig?.timezone || "Asia/Manila");
             })
             .catch(error => isMounted && setLoadError(error.message || "Could not load notifications."))
-            .finally(() => isMounted && setLoading(false));
+            .finally(() => isMounted && setIsLoading(false));
         return () => {
             isMounted = false;
         };
     }, []);
 
-    // Samakan badge Alerts dengan daftar ini
-    const unread = items.filter(item => !item.isRead).length;
+    // unread count
+    const unreadCount = notifications.filter(notification => !notification.isRead).length;
+    // sync badge
     useEffect(() => {
-        onCountChange?.(unread);
-    }, [unread, onCountChange]);
+        onUnreadCountChange?.(unreadCount);
+    }, [unreadCount, onUnreadCountChange]);
 
-    // Panggil API dulu; daftar hanya diubah jika berhasil
-    const runAction = async (action, updateItems, successMessage) => {
+    // run action
+    const runNotificationAction = async (action, updateNotifications, successMessage) => {
         setActionError("");
-        setActionLoading(true);
+        setIsActionLoading(true);
         try {
             await action();
-            setItems(updateItems);
-            onSystemChange?.(successMessage);
+            setNotifications(updateNotifications);
+            onSuccessNotice?.(successMessage);
         } catch (error) {
             setActionError(error.message || "Could not update notifications.");
         } finally {
-            setActionLoading(false);
+            setIsActionLoading(false);
         }
     };
 
-    const markOne = id =>
-        runAction(
-            () => markNotificationRead(AQUARIUM_ID, id),
-            current => current.map(item => (item.id === id ? { ...item, isRead: true } : item)),
+    // mark read
+    const handleMarkRead = notificationId =>
+        runNotificationAction(
+            () => markNotificationRead(activeAquariumId, notificationId),
+            current =>
+                current.map(notification =>
+                    notification.id === notificationId ? { ...notification, isRead: true } : notification,
+                ),
             "Notification marked as read.",
         );
 
-    const markAll = () =>
-        runAction(
-            () => markAllNotificationsRead(AQUARIUM_ID),
-            current => current.map(item => ({ ...item, isRead: true })),
+    // mark read
+    const handleMarkAllRead = () =>
+        runNotificationAction(
+            () => markAllNotificationsRead(activeAquariumId),
+            current => current.map(notification => ({ ...notification, isRead: true })),
             "All notifications marked as read.",
         );
 
-    const remove = id =>
-        runAction(
-            () => deleteNotification(AQUARIUM_ID, id),
-            current => current.filter(item => item.id !== id),
+    // delete
+    const handleDeleteNotification = notificationId =>
+        runNotificationAction(
+            () => deleteNotification(activeAquariumId, notificationId),
+            current => current.filter(notification => notification.id !== notificationId),
             "Notification deleted.",
         );
 
-    if (loading || loadError) {
+    if (isLoading || loadError) {
         return (
             <div className="px-4 py-5">
                 <PageHeader title="Notifications" />
-                {loading ? <Spinner /> : <ErrorAlert message={loadError} />}
+                {isLoading ? <LoadingSpinner /> : <ErrorAlert message={loadError} />}
             </div>
         );
     }
@@ -106,16 +114,16 @@ export default function NotificationsPage({ onCountChange, onSystemChange }) {
         <div className="flex min-h-[calc(100dvh-8rem)] flex-col px-4 py-5 md:min-h-[calc(100dvh-10.5rem)] md:px-8 md:py-7">
             <PageHeader
                 title="Notifications"
-                subtitle={unread > 0 ? `${unread} unread` : "All caught up"}
+                subtitle={unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
                 timezone={timezone}
                 right={
-                    unread > 0 && (
+                    unreadCount > 0 && (
                         <button
-                            onClick={markAll}
-                            disabled={actionLoading}
+                            onClick={handleMarkAllRead}
+                            disabled={isActionLoading}
                             className="flex items-center gap-1.5 px-3 py-2 bg-blue-500 text-white text-xs font-semibold rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-60"
                         >
-                            <Check /> Mark all read
+                            <CheckIcon /> Mark all read
                         </button>
                     )
                 }
@@ -123,14 +131,14 @@ export default function NotificationsPage({ onCountChange, onSystemChange }) {
             <ErrorAlert message={actionError} />
 
             <div className="flex gap-2 mb-4">
-                {TYPE_COUNTERS.map(([type, label, color]) => (
+                {NOTIFICATION_TYPE_COUNTERS.map(([type, label, color]) => (
                     <span key={type} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${color}`}>
-                        {items.filter(item => item.type === type).length} {label}
+                        {notifications.filter(notification => notification.type === type).length} {label}
                     </span>
                 ))}
             </div>
 
-            {items.length === 0 && (
+            {notifications.length === 0 && (
                 <div className="flex flex-1 flex-col items-center justify-center py-12 text-slate-400">
                     <div className="mb-4 text-5xl">🔔</div>
                     <p className="text-base">No notifications yet.</p>
@@ -138,50 +146,54 @@ export default function NotificationsPage({ onCountChange, onSystemChange }) {
             )}
 
             <div className="space-y-3">
-                {items.map(item => {
-                    const style = TYPE_STYLES[item.type] || TYPE_STYLES.info;
+                {notifications.map(notification => {
+                    const style = NOTIFICATION_TYPE_STYLES[notification.type] || NOTIFICATION_TYPE_STYLES.info;
                     return (
                         <div
-                            key={item.id}
+                            key={notification.id}
                             className={`${style.bg} border ${style.border} rounded-2xl p-4 md:p-6 transition-opacity ${
-                                item.isRead ? "opacity-75" : ""
+                                notification.isRead ? "opacity-75" : ""
                             }`}
                         >
                             <div className="flex items-start gap-3">
                                 <span className="text-base mt-0.5 flex-shrink-0">{style.emoji}</span>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                        <span className="text-base font-bold text-slate-800">{item.title}</span>
-                                        {!item.isRead && (
+                                        <span className="text-base font-bold text-slate-800">{notification.title}</span>
+                                        {!notification.isRead && (
                                             <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
                                         )}
                                         <span
                                             className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ml-auto ${style.badge}`}
                                         >
-                                            {item.type}
+                                            {notification.type}
                                         </span>
                                     </div>
-                                    <p className="text-sm text-slate-600 leading-relaxed mb-2">{item.message}</p>
-                                    <div className="text-xs text-slate-400">{relativeTime(item.timestamp)}</div>
+                                    <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                                        {notification.message}
+                                    </p>
+                                    <div className="text-xs text-slate-400">
+                                        {formatRelativeTime(notification.timestamp)}
+                                    </div>
                                 </div>
                             </div>
 
                             <div className="flex justify-end gap-2 mt-3 pt-2 border-t border-slate-200/50">
-                                {!item.isRead && (
+                                {!notification.isRead && (
                                     <button
-                                        onClick={() => markOne(item.id)}
-                                        disabled={actionLoading}
+                                        onClick={() => handleMarkRead(notification.id)}
+                                        disabled={isActionLoading}
                                         className="flex items-center gap-1 px-3 py-1.5 bg-white rounded-lg text-xs font-semibold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-60"
                                     >
-                                        <Check /> Read
+                                        <CheckIcon /> Read
                                     </button>
                                 )}
                                 <button
-                                    onClick={() => remove(item.id)}
-                                    disabled={actionLoading}
+                                    onClick={() => handleDeleteNotification(notification.id)}
+                                    disabled={isActionLoading}
                                     className="flex items-center gap-1 px-3 py-1.5 bg-white rounded-lg text-xs font-semibold text-red-500 border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-60"
                                 >
-                                    <Trash /> Delete
+                                    <TrashIcon /> Delete
                                 </button>
                             </div>
                         </div>

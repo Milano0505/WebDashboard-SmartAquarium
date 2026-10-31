@@ -1,6 +1,6 @@
 import { Component } from "react";
 
-// Jaring pengaman: error saat render tidak boleh lagi membuat layar putih total
+// error boundary
 export default class ErrorBoundary extends Component {
     state = { error: null };
 

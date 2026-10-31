@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { adminCreateDevice, adminGetDevices, adminRevokeDevice } from "../../api/service";
-import { Spinner } from "../ui";
-import { EmptyState, inputClass, Section, SmallButton, StatusMessages, useAction } from "./shared";
+import { adminCreateDevice, adminGetDevices, adminRevokeDevice } from "../../api/backendApi";
+import { LoadingSpinner } from "../UiKit";
+import { EmptyState, INPUT_CLASS_NAME, SectionCard, SmallButton, StatusMessages, useApiAction } from "./AccessUiParts";
 
-// Perangkat ESP32 pada satu akuarium (hanya admin). Kunci perangkat hanya ditampilkan sekali saat didaftarkan
-export default function DevicesSection({ aquariumId, onChanged }) {
+// devices section
+export default function DevicesSection({ aquariumId, onDataChanged }) {
+    // state
     const [devices, setDevices] = useState(null);
-    const [name, setName] = useState("");
-    const [newKey, setNewKey] = useState("");
-    const [copied, setCopied] = useState(false);
+    const [deviceName, setDeviceName] = useState("");
+    const [newDeviceKey, setNewDeviceKey] = useState("");
+    const [isKeyCopied, setIsKeyCopied] = useState(false);
     const [loadError, setLoadError] = useState("");
-    const { status, busy, run } = useAction();
+    const { status, isBusy, runApiAction } = useApiAction();
 
-    const load = useCallback(
+    // load devices
+    const loadDevices = useCallback(
         () =>
             adminGetDevices(aquariumId)
                 .then(result => {
@@ -23,61 +25,66 @@ export default function DevicesSection({ aquariumId, onChanged }) {
         [aquariumId],
     );
 
+    // initial load
     useEffect(() => {
         setDevices(null);
-        setNewKey("");
-        load();
-    }, [load]);
+        setNewDeviceKey("");
+        loadDevices();
+    }, [loadDevices]);
 
-    const handleCreate = async event => {
+    // register device
+    const handleRegisterDevice = async event => {
         event.preventDefault();
-        const result = await run(() => adminCreateDevice(aquariumId, name), "Device registered.");
+        const result = await runApiAction(() => adminCreateDevice(aquariumId, deviceName), "Device registered.");
         if (result) {
-            setNewKey(result.deviceKey);
-            setCopied(false);
-            setName("");
-            await load();
-            onChanged?.();
+            setNewDeviceKey(result.deviceKey);
+            setIsKeyCopied(false);
+            setDeviceName("");
+            await loadDevices();
+            onDataChanged?.();
         }
     };
 
-    const handleRevoke = async device => {
+    // revoke device
+    const handleRevokeDevice = async device => {
         if (!window.confirm(`Revoke ${device.name}? It will stop working until you register it again.`)) return;
-        if (await run(() => adminRevokeDevice(device.id), "Device revoked.")) {
-            await load();
-            onChanged?.();
+        if (await runApiAction(() => adminRevokeDevice(device.id), "Device revoked.")) {
+            await loadDevices();
+            onDataChanged?.();
         }
     };
 
-    const copyKey = async () => {
+    // copy key
+    const copyDeviceKey = async () => {
         try {
-            await navigator.clipboard.writeText(newKey);
-            setCopied(true);
+            await navigator.clipboard.writeText(newDeviceKey);
+            setIsKeyCopied(true);
         } catch {
-            setCopied(false);
+            setIsKeyCopied(false);
         }
     };
 
     return (
-        <Section
+        <SectionCard
             title="Device"
             description="Each aquarium has exactly one ESP32. Its key only works for this aquarium."
         >
             <StatusMessages status={status} extraError={loadError} />
 
-            {newKey && (
+            {/* new key */}
+            {newDeviceKey && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                     <div className="mb-1 font-semibold">Copy this key now. It will not be shown again.</div>
-                    <code className="block break-all rounded bg-white px-2 py-1.5 text-xs">{newKey}</code>
+                    <code className="block break-all rounded bg-white px-2 py-1.5 text-xs">{newDeviceKey}</code>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <SmallButton onClick={copyKey}>{copied ? "Copied" : "Copy key"}</SmallButton>
+                        <SmallButton onClick={copyDeviceKey}>{isKeyCopied ? "Copied" : "Copy key"}</SmallButton>
                         <span className="text-xs">Put it in device/include/secrets.h as DEVICE_KEY.</span>
                     </div>
                 </div>
             )}
 
             {devices === null && !loadError ? (
-                <Spinner />
+                <LoadingSpinner />
             ) : devices?.length === 0 ? (
                 <EmptyState>No device registered yet.</EmptyState>
             ) : (
@@ -88,7 +95,7 @@ export default function DevicesSection({ aquariumId, onChanged }) {
                                 <div className="truncate text-sm font-semibold text-slate-800">{device.name}</div>
                                 <div className="truncate font-mono text-xs text-slate-400">{device.id}</div>
                             </div>
-                            <SmallButton tone="danger" disabled={busy} onClick={() => handleRevoke(device)}>
+                            <SmallButton tone="danger" disabled={isBusy} onClick={() => handleRevokeDevice(device)}>
                                 Revoke
                             </SmallButton>
                         </li>
@@ -96,27 +103,26 @@ export default function DevicesSection({ aquariumId, onChanged }) {
                 </ul>
             )}
 
-            {/* Satu akuarium hanya boleh punya satu perangkat: pendaftaran baru hanya setelah yang lama dicabut */}
             {devices?.length > 0 ? (
                 <p className="text-xs text-slate-400">
                     This aquarium already has its device. To replace the ESP32, revoke this one first, then register the
                     new one and flash it with the new key.
                 </p>
             ) : (
-                <form onSubmit={handleCreate} className="flex flex-col gap-2 sm:flex-row">
+                <form onSubmit={handleRegisterDevice} className="flex flex-col gap-2 sm:flex-row">
                     <input
                         required
                         maxLength={80}
-                        value={name}
-                        onChange={event => setName(event.target.value)}
+                        value={deviceName}
+                        onChange={event => setDeviceName(event.target.value)}
                         placeholder="Device name"
-                        className={inputClass}
+                        className={INPUT_CLASS_NAME}
                     />
-                    <SmallButton type="submit" tone="primary" disabled={busy}>
+                    <SmallButton type="submit" tone="primary" disabled={isBusy}>
                         Register device
                     </SmallButton>
                 </form>
             )}
-        </Section>
+        </SectionCard>
     );
 }
