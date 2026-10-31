@@ -1,7 +1,4 @@
-// Membuktikan bahwa database hanya bisa diakses backend: role anon dan authenticated (dipakai Data API Supabase
-// dengan kunci publik di browser) tidak boleh membaca, menulis, atau memanggil fungsi apa pun. Dijalankan pada
-// PostgreSQL asli (PGlite) dengan meniru hak bawaan platform Supabase sebelum migrasi diterapkan.
-// Jalankan: npm test
+// lockdown db
 import { PGlite } from "@electric-sql/pglite";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,7 +12,7 @@ const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
 
 const PERMISSION_DENIED = "42501";
 
-// Meniru project Supabase baru: role, schema auth, dan hak bawaan yang dibuka untuk anon dan authenticated
+// meniru supabase
 async function supabaseLikeDatabase(migrations) {
     const db = new PGlite();
     await db.exec(`
@@ -33,7 +30,7 @@ async function supabaseLikeDatabase(migrations) {
     return db;
 }
 
-// Jalankan sql sebagai role tertentu. Hasil { ok, rows } atau { ok: false, code } saat ditolak
+// jalankan sql
 async function runAs(db, role, sql) {
     await db.exec(`set role ${role}`);
     try {

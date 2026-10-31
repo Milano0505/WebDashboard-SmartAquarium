@@ -1,81 +1,84 @@
 import { useEffect, useRef, useState } from "react";
-import { getNotifications } from "../api/service";
+import { getNotifications } from "../api/backendApi";
 
-const POLL_INTERVAL_MS = 15_000;
+// poll interval
+const NEW_NOTIFICATION_POLL_INTERVAL_MS = 15_000;
 
-function currentPermission() {
+// permission
+function getNotificationPermission() {
     if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
     return window.Notification.permission;
 }
 
-function savePreference(key, enabled) {
+// store preference
+function storeBrowserNotificationPreference(key, isEnabled) {
     try {
-        if (key) localStorage.setItem(key, String(enabled));
+        if (key) localStorage.setItem(key, String(isEnabled));
     } catch (error) {
         console.warn("Unable to save browser notification preferences.", error);
     }
 }
 
-// Browser notification: satu-satunya kanal alert selain halaman Alerts (tanpa email/SMS).
-// Saat aktif dan dashboard terbuka, notifikasi baru dicek tiap 15 detik.
-// Preferensi on/off disimpan per user di localStorage
+// browser notifications
 export default function useBrowserNotifications(userId, aquariumId) {
-    const [permission, setPermission] = useState(currentPermission);
-    const [enabled, setEnabled] = useState(false);
-    const knownIds = useRef(null);
+    // state
+    const [permission, setPermission] = useState(getNotificationPermission);
+    const [isEnabled, setIsEnabled] = useState(false);
+    const knownNotificationIds = useRef(null);
     const preferenceKey = userId ? `sa_browser_notifications:${userId}` : null;
 
-    // Pulihkan preferensi user
+    // restore preference
     useEffect(() => {
         try {
-            setEnabled(
+            setIsEnabled(
                 Boolean(
                     preferenceKey &&
                     localStorage.getItem(preferenceKey) === "true" &&
-                    currentPermission() === "granted",
+                    getNotificationPermission() === "granted",
                 ),
             );
         } catch {
-            setEnabled(false);
+            setIsEnabled(false);
         }
     }, [preferenceKey]);
 
-    // Mengembalikan izin hasil ("granted", "denied", "unsupported") atau "disabled"
-    const setBrowserNotifications = async shouldEnable => {
+    // toggle notifications
+    const setBrowserNotificationsEnabled = async shouldEnable => {
         if (!shouldEnable) {
-            setEnabled(false);
-            savePreference(preferenceKey, false);
+            setIsEnabled(false);
+            storeBrowserNotificationPreference(preferenceKey, false);
             return "disabled";
         }
-        if (currentPermission() === "unsupported") return "unsupported";
+        if (getNotificationPermission() === "unsupported") return "unsupported";
 
-        let result = window.Notification.permission;
+        let permissionResult = window.Notification.permission;
         try {
-            if (result === "default") result = await window.Notification.requestPermission();
+            if (permissionResult === "default") permissionResult = await window.Notification.requestPermission();
         } catch (error) {
             console.warn("Unable to request browser notification permission.", error);
             return "denied";
         }
-        setPermission(result);
-        setEnabled(result === "granted");
-        savePreference(preferenceKey, result === "granted");
-        return result;
+        setPermission(permissionResult);
+        setIsEnabled(permissionResult === "granted");
+        storeBrowserNotificationPreference(preferenceKey, permissionResult === "granted");
+        return permissionResult;
     };
 
+    // poll notifications
     useEffect(() => {
-        knownIds.current = null;
-        if (!enabled || permission !== "granted" || !userId || !aquariumId) return undefined;
+        knownNotificationIds.current = null;
+        if (!isEnabled || permission !== "granted" || !userId || !aquariumId) return undefined;
 
         let isActive = true;
-        const checkForNotifications = async () => {
+        // check new
+        const checkForNewNotifications = async () => {
             try {
                 const { notificationRecords } = await getNotifications(aquariumId, { limit: 100 });
                 if (!isActive) return;
 
-                // Pengecekan pertama hanya mencatat ID agar notifikasi lama tidak muncul lagi
-                if (knownIds.current) {
+                if (knownNotificationIds.current) {
                     notificationRecords
-                        .filter(record => record.id && !knownIds.current.has(record.id))
+                        .filter(record => record.id && !knownNotificationIds.current.has(record.id))
                         .reverse()
                         .forEach(record => {
                             const notification = new window.Notification(record.title || "Smart Aquarium", {
@@ -89,24 +92,24 @@ export default function useBrowserNotifications(userId, aquariumId) {
                             };
                         });
                 }
-                knownIds.current = new Set(notificationRecords.map(record => record.id));
+                knownNotificationIds.current = new Set(notificationRecords.map(record => record.id));
             } catch (error) {
                 console.warn("Unable to check for new browser notifications.", error);
             }
         };
 
-        checkForNotifications();
-        const intervalId = window.setInterval(checkForNotifications, POLL_INTERVAL_MS);
+        checkForNewNotifications();
+        const intervalId = window.setInterval(checkForNewNotifications, NEW_NOTIFICATION_POLL_INTERVAL_MS);
         return () => {
             isActive = false;
             window.clearInterval(intervalId);
         };
-    }, [enabled, permission, userId, aquariumId]);
+    }, [isEnabled, permission, userId, aquariumId]);
 
     return {
         permission,
-        enabled,
-        supported: permission !== "unsupported",
-        setBrowserNotifications,
+        isEnabled,
+        isSupported: permission !== "unsupported",
+        setBrowserNotificationsEnabled,
     };
 }

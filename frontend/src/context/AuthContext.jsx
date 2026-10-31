@@ -1,167 +1,176 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { logout as apiLogout, getAquariums, isAuthBusy, startSession, updateUserProfile } from "../api/service";
-import { auth } from "../supabase";
+import {
+    logoutAccount,
+    getAquariumList,
+    isAuthInProgress,
+    syncBackendSession,
+    updateUserProfile,
+} from "../api/backendApi";
+import { supabaseAuth } from "../supabaseAuth";
 
+// auth context
 const AuthContext = createContext(null);
-const ACTIVE_AQUARIUM_KEY = "sa_active_aquarium";
+// storage key
+const ACTIVE_AQUARIUM_STORAGE_KEY = "sa_active_aquarium";
 
-// ---------- Fungsi bantu ----------
-
-// Versi lama bisa menyimpan URL blob: sebagai foto profil; URL ini rusak setelah reload
+// blob url
 const isBlobUrl = url => typeof url === "string" && url.startsWith("blob:");
 
-function readActiveAquarium() {
+// stored aquarium
+function readStoredAquariumId() {
     try {
-        return localStorage.getItem(ACTIVE_AQUARIUM_KEY);
+        return localStorage.getItem(ACTIVE_AQUARIUM_STORAGE_KEY);
     } catch {
         return null;
     }
 }
 
-function saveActiveAquarium(aquariumId) {
+// store aquarium
+function storeActiveAquariumId(aquariumId) {
     try {
-        if (aquariumId) localStorage.setItem(ACTIVE_AQUARIUM_KEY, aquariumId);
-        else localStorage.removeItem(ACTIVE_AQUARIUM_KEY);
+        if (aquariumId) localStorage.setItem(ACTIVE_AQUARIUM_STORAGE_KEY, aquariumId);
+        else localStorage.removeItem(ACTIVE_AQUARIUM_STORAGE_KEY);
     } catch (error) {
         console.warn("Unable to save the selected aquarium.", error);
     }
 }
 
-// ---------- Provider ----------
-
-// Status login dipegang Supabase Auth (onAuthStateChange). Profil, peran admin, dan daftar
-// akuarium diambil dari backend setiap aplikasi dibuka
+// auth provider
 export function AuthProvider({ children }) {
+    // auth state
     const [isAuthLoading, setIsAuthLoading] = useState(true);
     const [user, setUser] = useState(null);
     const [aquariums, setAquariums] = useState([]);
-    const [selectedAquariumId, setSelectedAquariumId] = useState(readActiveAquarium);
+    const [selectedAquariumId, setSelectedAquariumId] = useState(readStoredAquariumId);
 
-    const loadAquariums = useCallback(async () => {
-        const { aquariums: list } = await getAquariums();
-        setAquariums(list);
-        return list;
+    // load aquariums
+    const loadAquariumList = useCallback(async () => {
+        const { aquariums: aquariumList } = await getAquariumList();
+        setAquariums(aquariumList);
+        return aquariumList;
     }, []);
 
-    // Dipanggil Login/Register setelah backend membalas profil
-    const signIn = useCallback(
+    // sign in
+    const completeSignIn = useCallback(
         async profile => {
             setUser(profile);
-            await loadAquariums();
+            await loadAquariumList();
         },
-        [loadAquariums],
+        [loadAquariumList],
     );
 
-    const clearSession = useCallback(() => {
+    // clear auth
+    const clearAuthState = useCallback(() => {
         setUser(null);
         setAquariums([]);
     }, []);
 
+    // sign out
     const signOut = async () => {
         try {
-            await apiLogout();
+            await logoutAccount();
         } finally {
-            clearSession();
+            clearAuthState();
         }
     };
 
-    // Jalan sekali saat aplikasi dibuka, lalu setiap status login Supabase berubah
+    // session listener
     useEffect(() => {
         let isMounted = true;
 
-        const loadSession = async () => {
+        // load session
+        const loadSavedSession = async () => {
             try {
-                const { userProfile } = await startSession();
+                const { userProfile } = await syncBackendSession();
                 if (isBlobUrl(userProfile.photoUrl)) {
                     await updateUserProfile(userProfile.id, { photoUrl: null }).catch(error =>
                         console.warn("Unable to clear a temporary profile photo URL.", error),
                     );
                     userProfile.photoUrl = null;
                 }
-                const { aquariums: list } = await getAquariums();
+                const { aquariums: aquariumList } = await getAquariumList();
                 if (!isMounted) return;
                 setUser(userProfile);
-                setAquariums(list);
+                setAquariums(aquariumList);
             } catch (error) {
                 if (error.status === 401) {
-                    await apiLogout().catch(() => {});
-                    if (isMounted) clearSession();
+                    await logoutAccount().catch(() => {});
+                    if (isMounted) clearAuthState();
                 } else {
                     console.warn("Unable to validate the saved session.", error);
                 }
             }
         };
 
-        // INITIAL_SESSION datang sekali saat dibuka. TOKEN_REFRESHED tiap jam tidak perlu memuat ulang profil
         const {
             data: { subscription },
-        } = auth.onAuthStateChange((event, session) => {
+        } = supabaseAuth.onAuthStateChange((event, session) => {
             if (event === "TOKEN_REFRESHED") return;
-            // Jangan memanggil Supabase langsung di dalam callback ini (bisa menahan kunci auth): tunda satu tick
             setTimeout(async () => {
                 if (!session) {
                     if (isMounted) {
-                        clearSession();
+                        clearAuthState();
                         setIsAuthLoading(false);
                     }
                     return;
                 }
-                // Login/register sedang berjalan; mereka memuat sesi sendiri lewat signIn()
-                if (!isAuthBusy()) await loadSession();
+                if (!isAuthInProgress()) await loadSavedSession();
                 if (isMounted) setIsAuthLoading(false);
             }, 0);
         });
 
-        // Dipicu client API saat respons 401
-        const handleUnauthorized = () => {
-            apiLogout().catch(() => {});
-            clearSession();
+        // unauthorized handler
+        const handleUnauthorizedEvent = () => {
+            logoutAccount().catch(() => {});
+            clearAuthState();
         };
-        window.addEventListener("sa:unauthorized", handleUnauthorized);
+        window.addEventListener("sa:unauthorized", handleUnauthorizedEvent);
 
+        // context value
         return () => {
             isMounted = false;
             subscription.unsubscribe();
-            window.removeEventListener("sa:unauthorized", handleUnauthorized);
+            window.removeEventListener("sa:unauthorized", handleUnauthorizedEvent);
         };
-    }, [clearSession]);
+    }, [clearAuthState]);
 
-    // Akuarium aktif: pilihan tersimpan jika masih bisa diakses, jika tidak yang pertama
-    const activeAquarium = aquariums.find(item => item.id === selectedAquariumId) || aquariums[0] || null;
+    // active aquarium
+    const activeAquarium = aquariums.find(aquarium => aquarium.id === selectedAquariumId) || aquariums[0] || null;
     const activeAquariumId = activeAquarium?.id ?? null;
-    const activeRole = activeAquarium?.role ?? null;
+    const activeAquariumRole = activeAquarium?.role ?? null;
 
-    const selectAquarium = aquariumId => {
-        saveActiveAquarium(aquariumId);
+    // select aquarium
+    const selectActiveAquarium = aquariumId => {
+        storeActiveAquariumId(aquariumId);
         setSelectedAquariumId(aquariumId);
     };
 
+    // role flags
     const isAdmin = user?.role === "admin";
-    // member, owner, dan admin boleh mengubah akuarium; viewer hanya melihat monitoring
-    const canControl = activeRole === "member" || activeRole === "owner" || activeRole === "admin";
-    const isViewer = activeRole === "viewer";
-    // Akuarium yang dimiliki user sebagai owner; halaman Access dibuka untuk admin dan siapa pun yang punya satu
-    const ownedAquariums = aquariums.filter(item => item.role === "owner");
-    const canOpenAccess = isAdmin || ownedAquariums.length > 0;
+    const canControlAquarium =
+        activeAquariumRole === "member" || activeAquariumRole === "owner" || activeAquariumRole === "admin";
+    const isViewer = activeAquariumRole === "viewer";
+    const ownedAquariums = aquariums.filter(aquarium => aquarium.role === "owner");
+    const canOpenAccessPage = isAdmin || ownedAquariums.length > 0;
 
     return (
         <AuthContext.Provider
             value={{
                 user,
                 setUser,
-                signIn,
+                completeSignIn,
                 signOut,
                 isAuthLoading,
                 isAuthenticated: Boolean(user),
                 aquariums,
-                refreshAquariums: loadAquariums,
+                refreshAquariums: loadAquariumList,
                 activeAquariumId,
-                activeRole,
-                selectAquarium,
+                activeAquariumRole,
+                selectActiveAquarium,
                 isAdmin,
-                canControl,
-                canManageAccess: activeRole === "owner" || activeRole === "admin",
-                canOpenAccess,
+                canControlAquarium,
+                canManageAccess: activeAquariumRole === "owner" || activeAquariumRole === "admin",
+                canOpenAccessPage,
                 isViewer,
                 ownedAquariums,
             }}
@@ -171,6 +180,7 @@ export function AuthProvider({ children }) {
     );
 }
 
+// auth hook
 export function useAuth() {
     const context = useContext(AuthContext);
     if (!context) throw new Error("useAuth must be used inside AuthProvider");

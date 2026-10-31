@@ -1,33 +1,34 @@
 import { useCallback, useEffect, useState } from "react";
-import { adminGetAquariums } from "../../api/service";
+import { adminGetAquariums } from "../../api/backendApi";
 import { useAuth } from "../../context/AuthContext";
-import { ErrorAlert, Spinner } from "../ui";
+import { ErrorAlert, LoadingSpinner } from "../UiKit";
 import AquariumPeople from "./AquariumPeople";
 import AquariumSummary from "./AquariumSummary";
 import DevicesSection from "./DevicesSection";
 import NewAquariumForm from "./NewAquariumForm";
-import { EmptyState, SmallButton } from "./shared";
+import { EmptyState, SmallButton } from "./AccessUiParts";
 import UsersTab from "./UsersTab";
 
-const TABS = [
+// admin tabs
+const ADMIN_ACCESS_TABS = [
     { id: "aquariums", label: "Aquariums" },
     { id: "users", label: "Users" },
 ];
 
-// Daftar akuarium di sisi kiri; tiap baris menampilkan owner dan jumlah anggota serta perangkat
-function AquariumList({ aquariums, selectedId, onSelect }) {
+// aquarium list
+function AquariumList({ aquariums, selectedAquariumId, onSelectAquarium }) {
     return (
         <ul className="space-y-2">
             {aquariums.map(item => {
-                const selected = item.id === selectedId;
+                const isSelected = item.id === selectedAquariumId;
                 return (
                     <li key={item.id}>
                         <button
                             type="button"
-                            onClick={() => onSelect(item.id)}
-                            aria-current={selected}
+                            onClick={() => onSelectAquarium(item.id)}
+                            aria-current={isSelected}
                             className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                                selected
+                                isSelected
                                     ? "border-blue-400 bg-blue-50"
                                     : "border-slate-200 bg-white hover:border-blue-200"
                             }`}
@@ -51,23 +52,24 @@ function AquariumList({ aquariums, selectedId, onSelect }) {
     );
 }
 
-// Tampilan admin: master-detail akuarium (owner, member, perangkat) dan tab semua user
+// admin access
 export default function AdminAccess() {
     const { refreshAquariums } = useAuth();
-    const [tab, setTab] = useState("aquariums");
+    // state
+    const [activeTab, setActiveTab] = useState("aquariums");
     const [aquariums, setAquariums] = useState(null);
-    const [selectedId, setSelectedId] = useState(null);
-    const [creating, setCreating] = useState(false);
+    const [selectedAquariumId, setSelectedAquariumId] = useState(null);
+    const [isCreating, setIsCreating] = useState(false);
     const [loadError, setLoadError] = useState("");
 
-    const load = useCallback(
+    // load aquariums
+    const loadAdminAquariums = useCallback(
         () =>
             adminGetAquariums()
                 .then(result => {
                     setAquariums(result.aquariums);
                     setLoadError("");
-                    // Pertahankan pilihan jika masih ada, jika tidak pilih yang pertama
-                    setSelectedId(current =>
+                    setSelectedAquariumId(current =>
                         result.aquariums.some(item => item.id === current)
                             ? current
                             : (result.aquariums[0]?.id ?? null),
@@ -77,36 +79,39 @@ export default function AdminAccess() {
         [],
     );
 
+    // initial load
     useEffect(() => {
-        load();
-    }, [load]);
+        loadAdminAquariums();
+    }, [loadAdminAquariums]);
 
-    // Perubahan juga disegarkan ke daftar global agar pemilih akuarium di header ikut berubah
-    const handleChanged = useCallback(() => {
-        load();
+    // data changed
+    const handleAquariumDataChanged = useCallback(() => {
+        loadAdminAquariums();
         refreshAquariums().catch(() => {});
-    }, [load, refreshAquariums]);
+    }, [loadAdminAquariums, refreshAquariums]);
 
-    const handleCreated = async newId => {
-        setCreating(false);
-        await load();
-        setSelectedId(newId);
+    // aquarium created
+    const handleAquariumCreated = async newAquariumId => {
+        setIsCreating(false);
+        await loadAdminAquariums();
+        setSelectedAquariumId(newAquariumId);
         refreshAquariums().catch(() => {});
     };
 
-    const selected = aquariums?.find(item => item.id === selectedId) ?? null;
-    const noAquariums = aquariums !== null && aquariums.length === 0;
+    // selection
+    const selectedAquarium = aquariums?.find(item => item.id === selectedAquariumId) ?? null;
+    const hasNoAquariums = aquariums !== null && aquariums.length === 0;
 
     return (
         <div className="space-y-4">
             <div className="flex gap-2">
-                {TABS.map(item => (
+                {ADMIN_ACCESS_TABS.map(item => (
                     <button
                         key={item.id}
                         type="button"
-                        onClick={() => setTab(item.id)}
+                        onClick={() => setActiveTab(item.id)}
                         className={`rounded-full px-4 py-2 text-xs font-semibold transition-all ${
-                            tab === item.id
+                            activeTab === item.id
                                 ? "bg-blue-500 text-white shadow-sm"
                                 : "border border-slate-200 bg-white text-slate-600"
                         }`}
@@ -116,58 +121,68 @@ export default function AdminAccess() {
                 ))}
             </div>
 
-            {tab === "users" && <UsersTab />}
+            {/* users tab */}
+            {activeTab === "users" && <UsersTab />}
 
-            {tab === "aquariums" && (
+            {/* aquariums tab */}
+            {activeTab === "aquariums" && (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
                     <div className="space-y-3">
                         <div className="flex items-center justify-between gap-2">
                             <h2 className="text-sm font-bold text-slate-800">Aquariums</h2>
-                            {!creating && !noAquariums && (
-                                <SmallButton tone="primary" onClick={() => setCreating(true)}>
+                            {!isCreating && !hasNoAquariums && (
+                                <SmallButton tone="primary" onClick={() => setIsCreating(true)}>
                                     + New aquarium
                                 </SmallButton>
                             )}
                         </div>
 
-                        {(creating || noAquariums) && (
+                        {(isCreating || hasNoAquariums) && (
                             <NewAquariumForm
-                                onCreated={handleCreated}
-                                onCancel={noAquariums ? undefined : () => setCreating(false)}
+                                onAquariumCreated={handleAquariumCreated}
+                                onCancel={hasNoAquariums ? undefined : () => setIsCreating(false)}
                             />
                         )}
 
                         <ErrorAlert message={loadError} />
                         {aquariums === null && !loadError ? (
-                            <Spinner />
-                        ) : noAquariums ? (
+                            <LoadingSpinner />
+                        ) : hasNoAquariums ? (
                             <EmptyState>No aquariums yet. Create the first one.</EmptyState>
                         ) : (
                             aquariums && (
-                                <AquariumList aquariums={aquariums} selectedId={selectedId} onSelect={setSelectedId} />
+                                <AquariumList
+                                    aquariums={aquariums}
+                                    selectedAquariumId={selectedAquariumId}
+                                    onSelectAquarium={setSelectedAquariumId}
+                                />
                             )
                         )}
                     </div>
 
                     <div className="min-w-0 space-y-4">
-                        {selected ? (
+                        {selectedAquarium ? (
                             <>
-                                <AquariumSummary key={selected.id} aquarium={selected} onChanged={handleChanged} />
+                                <AquariumSummary
+                                    key={selectedAquarium.id}
+                                    aquarium={selectedAquarium}
+                                    onDataChanged={handleAquariumDataChanged}
+                                />
                                 <AquariumPeople
-                                    key={`people-${selected.id}`}
-                                    aquariumId={selected.id}
+                                    key={`people-${selectedAquarium.id}`}
+                                    aquariumId={selectedAquarium.id}
                                     isAdmin
-                                    onChanged={handleChanged}
+                                    onDataChanged={handleAquariumDataChanged}
                                 />
                                 <DevicesSection
-                                    key={`devices-${selected.id}`}
-                                    aquariumId={selected.id}
-                                    onChanged={handleChanged}
+                                    key={`devices-${selectedAquarium.id}`}
+                                    aquariumId={selectedAquarium.id}
+                                    onDataChanged={handleAquariumDataChanged}
                                 />
                             </>
                         ) : (
                             aquariums !== null &&
-                            !noAquariums && <EmptyState>Select an aquarium to manage it.</EmptyState>
+                            !hasNoAquariums && <EmptyState>Select an aquarium to manage it.</EmptyState>
                         )}
                     </div>
                 </div>

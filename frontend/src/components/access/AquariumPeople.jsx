@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
-import { getCandidates, getMembers, removeMember, saveMember } from "../../api/service";
+import {
+    getMemberCandidates,
+    getAquariumMembers,
+    removeAquariumMember,
+    saveAquariumMember,
+} from "../../api/backendApi";
 import RoleBadge from "../RoleBadge";
-import { Spinner } from "../ui";
+import { LoadingSpinner } from "../UiKit";
 import AddPersonPanel from "./AddPersonPanel";
-import { EmptyState, PersonRow, Section, SmallButton, StatusMessages, useAction } from "./shared";
+import { EmptyState, PersonRow, SectionCard, SmallButton, StatusMessages, useApiAction } from "./AccessUiParts";
 
-// Daftar orang pada satu akuarium. Admin mengelola owner dan member; owner hanya melihat dan mengelola member
-// (owner lain tidak ditampilkan dan tidak ada tombol mengangkat owner)
-export default function AquariumPeople({ aquariumId, isAdmin, onChanged }) {
+// aquarium people
+export default function AquariumPeople({ aquariumId, isAdmin, onDataChanged }) {
+    // state
     const [members, setMembers] = useState(null);
     const [candidates, setCandidates] = useState([]);
     const [loadError, setLoadError] = useState("");
-    const { status, busy, run } = useAction();
+    const { status, isBusy, runApiAction } = useApiAction();
 
-    const load = useCallback(async () => {
+    // load people
+    const loadPeople = useCallback(async () => {
         try {
             const [memberResult, candidateResult] = await Promise.all([
-                getMembers(aquariumId),
-                getCandidates(aquariumId),
+                getAquariumMembers(aquariumId),
+                getMemberCandidates(aquariumId),
             ]);
             setMembers(memberResult.members);
             setCandidates(candidateResult.candidates);
@@ -27,46 +33,51 @@ export default function AquariumPeople({ aquariumId, isAdmin, onChanged }) {
         }
     }, [aquariumId]);
 
+    // initial load
     useEffect(() => {
         setMembers(null);
-        load();
-    }, [load]);
+        loadPeople();
+    }, [loadPeople]);
 
-    const handleAdd = async (userId, role) => {
+    // add person
+    const handleAddPerson = async (userId, role) => {
         if (
-            await run(
-                () => saveMember(aquariumId, { userId, role }),
+            await runApiAction(
+                () => saveAquariumMember(aquariumId, { userId, role }),
                 role === "owner" ? "Owner added." : "Member added.",
             )
         ) {
-            await load();
-            onChanged?.();
+            await loadPeople();
+            onDataChanged?.();
         }
     };
 
-    const handleRemove = async person => {
+    // remove person
+    const handleRemovePerson = async person => {
         const label = person.fullName || person.email;
         if (!window.confirm(`Remove ${label} from this aquarium?`)) return;
-        if (await run(() => removeMember(aquariumId, person.userId), `${label} was removed.`)) {
-            await load();
-            onChanged?.();
+        if (await runApiAction(() => removeAquariumMember(aquariumId, person.userId), `${label} was removed.`)) {
+            await loadPeople();
+            onDataChanged?.();
         }
     };
 
-    if (members === null && !loadError) return <Spinner />;
+    if (members === null && !loadError) return <LoadingSpinner />;
 
+    // role lists
     const owners = (members || []).filter(person => person.role === "owner");
-    const plainMembers = (members || []).filter(person => person.role === "member");
+    const memberRoleList = (members || []).filter(person => person.role === "member");
 
-    const renderList = (list, emptyText) =>
-        list.length === 0 ? (
+    // render list
+    const renderPersonList = (personList, emptyText) =>
+        personList.length === 0 ? (
             <EmptyState>{emptyText}</EmptyState>
         ) : (
             <ul className="divide-y divide-slate-100">
-                {list.map(person => (
+                {personList.map(person => (
                     <PersonRow key={person.userId} person={person}>
                         <RoleBadge role={person.role} />
-                        <SmallButton tone="danger" disabled={busy} onClick={() => handleRemove(person)}>
+                        <SmallButton tone="danger" disabled={isBusy} onClick={() => handleRemovePerson(person)}>
                             Remove
                         </SmallButton>
                     </PersonRow>
@@ -79,29 +90,32 @@ export default function AquariumPeople({ aquariumId, isAdmin, onChanged }) {
             <StatusMessages status={status} extraError={loadError} />
 
             {isAdmin && (
-                <Section title="Owners" description="Owners control this aquarium and can add or remove its members.">
-                    {renderList(owners, "No owner yet. Add an owner so someone can manage members.")}
+                <SectionCard
+                    title="Owners"
+                    description="Owners control this aquarium and can add or remove its members."
+                >
+                    {renderPersonList(owners, "No owner yet. Add an owner so someone can manage members.")}
                     <AddPersonPanel
                         label="Add owner"
                         candidates={candidates}
-                        busy={busy}
-                        onAdd={userId => handleAdd(userId, "owner")}
+                        isBusy={isBusy}
+                        onAddPerson={userId => handleAddPerson(userId, "owner")}
                     />
-                </Section>
+                </SectionCard>
             )}
 
-            <Section
+            <SectionCard
                 title="Members"
                 description="Members can monitor and control this aquarium, but cannot manage people."
             >
-                {renderList(plainMembers, "No members yet.")}
+                {renderPersonList(memberRoleList, "No members yet.")}
                 <AddPersonPanel
                     label="Add member"
                     candidates={candidates}
-                    busy={busy}
-                    onAdd={userId => handleAdd(userId, "member")}
+                    isBusy={isBusy}
+                    onAddPerson={userId => handleAddPerson(userId, "member")}
                 />
-            </Section>
+            </SectionCard>
         </>
     );
 }

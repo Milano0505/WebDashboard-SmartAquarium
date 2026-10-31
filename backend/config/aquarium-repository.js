@@ -1,17 +1,18 @@
-import { query } from "./db.js";
-import { forbidden } from "../utils/errors.js";
-import { hasRole, isValidAquariumId } from "../utils/access.js";
+import { queryDatabase } from "./database.js";
+import { forbiddenError } from "../utils/http-errors.js";
+import { hasMinimumRole, isValidAquariumId } from "../utils/access-roles.js";
 
-const AQUARIUM_COLUMNS = `
+// kolom akuarium
+const AQUARIUM_SELECT_COLUMNS = `
     a.*,
     ds.current_temp, ds.heater_status, ds.led_status, ds.feeder_status, ds.last_updated,
     ds.offline_notified, ds.sensor_error_notified, ds.last_history_at`;
 
-// Ambil akuarium tanpa pemeriksaan akses (dipakai perangkat dan proses internal); null jika tidak ada
-export async function getAquarium(aquariumId, client = { query }) {
+// tanpa akses
+export async function getAquariumById(aquariumId, dbClient = { query: queryDatabase }) {
     if (!isValidAquariumId(aquariumId)) return null;
-    const { rows } = await client.query(
-        `select ${AQUARIUM_COLUMNS}
+    const { rows } = await dbClient.query(
+        `select ${AQUARIUM_SELECT_COLUMNS}
          from aquariums a left join device_state ds on ds.aquarium_id = a.id
          where a.id = $1`,
         [aquariumId],
@@ -19,39 +20,36 @@ export async function getAquarium(aquariumId, client = { query }) {
     return rows[0] ? { id: rows[0].id, row: rows[0] } : null;
 }
 
-// Ambil akuarium untuk user yang login sekaligus memeriksa perannya.
-// Peran: admin, owner/member (keanggotaan), atau viewer (user tanpa keanggotaan apa pun pada akuarium publik).
-// null = akuarium tidak ada (404); user tanpa akses atau perannya kurang ditolak dengan 403.
-// lock: kunci baris akuarium sampai transaksi selesai (untuk baca-ubah-tulis config)
-export async function findAquarium(
+// dengan akses
+export async function findAccessibleAquarium(
     aquariumId,
-    auth,
+    authUser,
     minimumRole = "viewer",
-    { client = { query }, lock = false } = {},
+    { client: dbClient = { query: queryDatabase }, lock = false } = {},
 ) {
     if (!isValidAquariumId(aquariumId)) return null;
-    const { rows } = await client.query(
-        `select ${AQUARIUM_COLUMNS}, m.role as member_role,
+    const { rows } = await dbClient.query(
+        `select ${AQUARIUM_SELECT_COLUMNS}, m.role as member_role,
                 (a.monitoring_public and not exists (select 1 from aquarium_members x where x.user_id = $2)) as viewer_access
          from aquariums a
          left join device_state ds on ds.aquarium_id = a.id
          left join aquarium_members m on m.aquarium_id = a.id and m.user_id = $2
          where a.id = $1
          ${lock ? "for update of a" : ""}`,
-        [aquariumId, auth.userId],
+        [aquariumId, authUser.userId],
     );
     const row = rows[0];
     if (!row) return null;
 
-    const role = auth.role === "admin" ? "admin" : (row.member_role ?? (row.viewer_access ? "viewer" : null));
-    if (!role) throw forbidden("You do not have access to this aquarium.");
-    if (!hasRole(role, minimumRole)) throw forbidden(`This action requires the ${minimumRole} role.`);
+    const role = authUser.role === "admin" ? "admin" : (row.member_role ?? (row.viewer_access ? "viewer" : null));
+    if (!role) throw forbiddenError("You do not have access to this aquarium.");
+    if (!hasMinimumRole(role, minimumRole)) throw forbiddenError(`This action requires the ${minimumRole} role.`);
     return { id: row.id, row, role };
 }
 
-// Rata-rata jam lampu ON dan OFF per hari dari pemakaian 7 hari terakhir (null jika belum ada data)
-export async function lightingAverages(aquariumId, client = { query }) {
-    const { rows } = await client.query(
+// jam lampu
+export async function getLightingAverageHours(aquariumId, dbClient = { query: queryDatabase }) {
+    const { rows } = await dbClient.query(
         `select coalesce(sum(on_seconds), 0) as on_seconds, coalesce(sum(off_seconds), 0) as off_seconds
          from (select on_seconds, off_seconds from lighting_usage where aquarium_id = $1 order by day desc limit 7) recent`,
         [aquariumId],
@@ -62,8 +60,8 @@ export async function lightingAverages(aquariumId, client = { query }) {
     return { avgHoursOn, avgHoursOff: Math.round((24 - avgHoursOn) * 10) / 10 };
 }
 
-// Bagian config sebagai objek yang sama dengan bentuk API: { tempConfig, lightingConfig, feederConfig, systemConfig }
-export function configSections(row) {
+// bagian config
+export function extractConfigSections(row) {
     return {
         tempConfig: row.temp_config,
         lightingConfig: row.lighting_config,
@@ -72,11 +70,11 @@ export function configSections(row) {
     };
 }
 
-// Bentuk respons akuarium untuk dashboard
-export async function aquariumResponse(aquarium) {
+// respons akuarium
+export async function buildAquariumResponse(aquarium) {
     const { row, role } = aquarium;
-    const sections = configSections(row);
-    const averages = await lightingAverages(row.id);
+    const configSections = extractConfigSections(row);
+    const lightingAverages = await getLightingAverageHours(row.id);
     return {
         id: row.id,
         name: row.name,
@@ -90,12 +88,12 @@ export async function aquariumResponse(aquarium) {
             feederStatus: row.feeder_status,
             lastUpdated: row.last_updated,
         },
-        tempConfig: sections.tempConfig,
-        lightingConfig: { ...sections.lightingConfig, ...averages },
-        feederConfig: sections.feederConfig,
+        tempConfig: configSections.tempConfig,
+        lightingConfig: { ...configSections.lightingConfig, ...lightingAverages },
+        feederConfig: configSections.feederConfig,
         systemConfig: {
-            pollFrequency: sections.systemConfig?.pollFrequency,
-            timezone: sections.systemConfig?.timezone,
+            pollFrequency: configSections.systemConfig?.pollFrequency,
+            timezone: configSections.systemConfig?.timezone,
         },
         createdAt: row.created_at,
         updatedAt: row.updated_at,

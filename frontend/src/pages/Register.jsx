@@ -1,89 +1,103 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { register } from "../api/service";
-import { Camera, ChevronLeft, Eye, EyeOff, Fish, Lock, Mail, User } from "../components/Icons";
-import { ErrorAlert, InputField, PrimaryBtn, SuccessAlert } from "../components/ui";
+import { registerAccount } from "../api/backendApi";
+import {
+    CameraIcon,
+    ChevronLeftIcon,
+    EyeIcon,
+    EyeOffIcon,
+    FishIcon,
+    LockIcon,
+    MailIcon,
+    UserIcon,
+} from "../components/Icons";
+import { ErrorAlert, InputField, PrimaryButton, SuccessAlert } from "../components/UiKit";
 import { useAuth } from "../context/AuthContext";
-import { initialsOf } from "../utils/format";
+import { getInitials } from "../utils/displayFormatters";
 import { createProfilePhotoDataUrl } from "../utils/profilePhoto";
 
+// register page
 export default function RegisterPage() {
-    const [form, setForm] = useState({
-        name: "",
+    // form state
+    const [registerForm, setRegisterForm] = useState({
+        fullName: "",
         email: "",
         password: "",
-        confirm: "",
+        confirmPassword: "",
     });
-    const [avatar, setAvatar] = useState(null);
+    const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(null);
     const [avatarFile, setAvatarFile] = useState(null);
-    const [showPw, setShowPw] = useState(false);
-    const [error, setError] = useState("");
-    const [loading, setLoading] = useState(false);
+    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+    const [errorMessage, setErrorMessage] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
     const [confirmationSent, setConfirmationSent] = useState(false);
-    const { signIn } = useAuth();
+    const { completeSignIn } = useAuth();
     const navigate = useNavigate();
-    const fileRef = useRef();
+    const avatarFileInputRef = useRef();
 
-    // Lepas URL preview foto yang dipilih
+    // revoke preview
     useEffect(
         () => () => {
-            if (avatar?.startsWith("blob:")) URL.revokeObjectURL(avatar);
+            if (avatarPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(avatarPreviewUrl);
         },
-        [avatar],
+        [avatarPreviewUrl],
     );
 
-    const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+    // update field
+    const updateFormField = fieldName => event =>
+        setRegisterForm(current => ({ ...current, [fieldName]: event.target.value }));
 
-    const handleAvatar = e => {
-        const file = e.target.files[0];
+    // avatar selected
+    const handleAvatarSelected = event => {
+        const file = event.target.files[0];
         if (!file) return;
         try {
             setAvatarFile(file);
-            setAvatar(URL.createObjectURL(file));
+            setAvatarPreviewUrl(URL.createObjectURL(file));
         } catch (error) {
-            setError(error instanceof Error ? error.message : "Could not load the selected photo.");
+            setErrorMessage(error instanceof Error ? error.message : "Could not load the selected photo.");
         }
     };
 
-    const handleSubmit = async e => {
-        e.preventDefault();
-        setError("");
-        if (!form.name || !form.email || !form.password) {
-            setError("Please fill in all required fields.");
+    // submit register
+    const handleRegisterSubmit = async event => {
+        event.preventDefault();
+        setErrorMessage("");
+        if (!registerForm.fullName || !registerForm.email || !registerForm.password) {
+            setErrorMessage("Please fill in all required fields.");
             return;
         }
-        if (form.password !== form.confirm) {
-            setError("Passwords do not match.");
+        if (registerForm.password !== registerForm.confirmPassword) {
+            setErrorMessage("Passwords do not match.");
             return;
         }
-        if (form.password.length < 6) {
-            setError("Password must be at least 6 characters.");
+        if (registerForm.password.length < 6) {
+            setErrorMessage("Password must be at least 6 characters.");
             return;
         }
-        setLoading(true);
+        setIsLoading(true);
         try {
-            // Foto opsional dikecilkan dan dikompres jadi data URL JPEG
             const photoUrl = avatarFile ? await createProfilePhotoDataUrl(avatarFile) : null;
-            const { userProfile, needsConfirmation } = await register({
-                fullName: form.name,
-                email: form.email,
-                password: form.password,
+            const { userProfile, needsConfirmation } = await registerAccount({
+                fullName: registerForm.fullName,
+                email: registerForm.email,
+                password: registerForm.password,
                 photoUrl,
             });
-            // Proyek mewajibkan konfirmasi email: belum ada sesi, jadi arahkan ke login setelah dikonfirmasi
             if (needsConfirmation) {
                 setConfirmationSent(true);
                 return;
             }
-            await signIn(userProfile);
+            await completeSignIn(userProfile);
             navigate("/dashboard", { replace: true });
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Registration failed.");
+        } catch (registrationError) {
+            setErrorMessage(registrationError instanceof Error ? registrationError.message : "Registration failed.");
         } finally {
-            setLoading(false);
+            setIsLoading(false);
         }
     };
 
+    // confirmation view
     if (confirmationSent) {
         return (
             <div
@@ -108,101 +122,111 @@ export default function RegisterPage() {
             }}
         >
             <div className="w-full max-w-[430px] min-h-screen md:min-h-0 flex flex-col md:rounded-3xl md:overflow-hidden md:shadow-2xl">
-                {/* Bagian atas */}
+                {/* header */}
                 <div className="flex flex-col items-center pt-10 pb-6 px-6 text-white">
                     <button
                         onClick={() => navigate("/login")}
                         className="self-start flex items-center gap-1 text-blue-300 hover:text-white text-sm font-semibold mb-4 transition-colors"
                     >
-                        <ChevronLeft /> Back to Sign In
+                        <ChevronLeftIcon /> Back to Sign In
                     </button>
                     <div className="w-16 h-16 rounded-2xl bg-blue-500/30 border border-blue-400/40 flex items-center justify-center mb-4">
-                        <Fish />
+                        <FishIcon />
                     </div>
                     <h1 className="text-2xl font-bold tracking-wide mb-1">SMART AQUARIUM</h1>
                     <p className="text-blue-300 text-sm text-center">Create your account to get started.</p>
                 </div>
 
-                {/* Form registrasi */}
+                {/* register form */}
                 <div className="flex-1 bg-white rounded-t-3xl px-6 pt-8 pb-10 space-y-4 overflow-y-auto scroll-area">
                     <div className="mb-2">
                         <h2 className="text-xl font-bold text-slate-800">Create Account</h2>
                         <p className="text-slate-400 text-sm">Fill in your details below</p>
                     </div>
 
-                    <ErrorAlert message={error} />
+                    <ErrorAlert message={errorMessage} />
 
-                    {/* Pilih foto profil */}
+                    {/* avatar picker */}
                     <div className="flex flex-col items-center pb-2">
                         <button
                             type="button"
-                            onClick={() => fileRef.current?.click()}
+                            onClick={() => avatarFileInputRef.current?.click()}
                             className="w-20 h-20 rounded-full overflow-hidden border-2 border-dashed border-slate-300 flex items-center justify-center bg-slate-50 hover:border-blue-400 transition-colors relative group"
                         >
-                            {avatar ? (
-                                <img src={avatar} alt="avatar" className="w-full h-full object-cover" />
-                            ) : form.name ? (
+                            {avatarPreviewUrl ? (
+                                <img src={avatarPreviewUrl} alt="avatar" className="w-full h-full object-cover" />
+                            ) : registerForm.fullName ? (
                                 <div className="w-full h-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold">
-                                    {initialsOf(form.name)}
+                                    {getInitials(registerForm.fullName)}
                                 </div>
                             ) : (
-                                <Camera />
+                                <CameraIcon />
                             )}
                             <div className="absolute inset-0 bg-black/25 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-full">
                                 <span className="text-white text-xs font-semibold">Edit</span>
                             </div>
                         </button>
                         <p className="text-xs text-slate-400 mt-2">Profile photo (optional)</p>
-                        <input ref={fileRef} type="file" accept="image/*" onChange={handleAvatar} className="hidden" />
+                        <input
+                            ref={avatarFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleAvatarSelected}
+                            className="hidden"
+                        />
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <form onSubmit={handleRegisterSubmit} className="space-y-4">
                         <InputField
                             label="Full Name"
                             type="text"
-                            value={form.name}
-                            onChange={set("name")}
+                            value={registerForm.fullName}
+                            onChange={updateFormField("fullName")}
                             placeholder="Juan dela Cruz"
-                            icon={User}
+                            icon={UserIcon}
                             required
                         />
                         <InputField
                             label="Email Address"
                             type="email"
-                            value={form.email}
-                            onChange={set("email")}
+                            value={registerForm.email}
+                            onChange={updateFormField("email")}
                             placeholder="you@email.com"
-                            icon={Mail}
+                            icon={MailIcon}
                             required
                         />
                         <InputField
                             label="Password"
-                            type={showPw ? "text" : "password"}
-                            value={form.password}
-                            onChange={set("password")}
+                            type={isPasswordVisible ? "text" : "password"}
+                            value={registerForm.password}
+                            onChange={updateFormField("password")}
                             placeholder="At least 6 characters"
-                            icon={Lock}
+                            icon={LockIcon}
                             required
                             right={
-                                <button type="button" onClick={() => setShowPw(!showPw)} className="text-slate-400 p-1">
-                                    {showPw ? <EyeOff /> : <Eye />}
+                                <button
+                                    type="button"
+                                    onClick={() => setIsPasswordVisible(!isPasswordVisible)}
+                                    className="text-slate-400 p-1"
+                                >
+                                    {isPasswordVisible ? <EyeOffIcon /> : <EyeIcon />}
                                 </button>
                             }
                         />
                         <InputField
                             label="Confirm Password"
                             type="password"
-                            value={form.confirm}
-                            onChange={set("confirm")}
+                            value={registerForm.confirmPassword}
+                            onChange={updateFormField("confirmPassword")}
                             placeholder="Repeat your password"
-                            icon={Lock}
+                            icon={LockIcon}
                             required
                         />
 
                         <div className="pt-2">
-                            <PrimaryBtn type="submit" disabled={loading}>
-                                {loading ? "Creating account…" : "Create Account"}
-                            </PrimaryBtn>
+                            <PrimaryButton type="submit" disabled={isLoading}>
+                                {isLoading ? "Creating account…" : "Create Account"}
+                            </PrimaryButton>
                         </div>
                     </form>
 

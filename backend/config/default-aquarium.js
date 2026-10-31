@@ -1,5 +1,5 @@
-// Config awal akuarium baru. hardwareInfo dan status realtime nanti diisi oleh ESP32 (device_state)
-export function createDefaultAquarium() {
+// config awal
+export function createDefaultAquariumConfig() {
     return {
         hardwareInfo: {
             microcontroller: null,

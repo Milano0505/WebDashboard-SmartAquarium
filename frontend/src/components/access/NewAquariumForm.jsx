@@ -1,61 +1,68 @@
 import { useEffect, useState } from "react";
-import { adminCreateAquarium, adminGetUsers } from "../../api/service";
-import { inputClass, SmallButton, StatusMessages, useAction } from "./shared";
+import { adminCreateAquarium, adminGetUsers } from "../../api/backendApi";
+import { INPUT_CLASS_NAME, SmallButton, StatusMessages, useApiAction } from "./AccessUiParts";
 
-// Form akuarium baru (admin): nama, ID opsional, dan owner opsional yang dipilih dari daftar user
-export default function NewAquariumForm({ onCreated, onCancel }) {
-    const [name, setName] = useState("");
-    const [id, setId] = useState("");
+// new aquarium
+export default function NewAquariumForm({ onAquariumCreated, onCancel }) {
+    // form state
+    const [aquariumName, setAquariumName] = useState("");
+    const [customAquariumId, setCustomAquariumId] = useState("");
     const [ownerId, setOwnerId] = useState("");
-    const [users, setUsers] = useState([]);
-    const { status, busy, run } = useAction();
+    const [ownerCandidates, setOwnerCandidates] = useState([]);
+    const { status, isBusy, runApiAction } = useApiAction();
 
-    // Calon owner: user biasa (admin sudah punya akses penuh)
+    // owner candidates
     useEffect(() => {
         adminGetUsers()
-            .then(result => setUsers(result.users.filter(user => user.role !== "admin")))
-            .catch(() => setUsers([]));
+            .then(result => setOwnerCandidates(result.users.filter(user => user.role !== "admin")))
+            .catch(() => setOwnerCandidates([]));
     }, []);
 
-    const handleSubmit = async event => {
+    // create aquarium
+    const handleCreateAquarium = async event => {
         event.preventDefault();
-        const result = await run(
-            () => adminCreateAquarium({ name: name.trim(), id: id.trim() || undefined, ownerId: ownerId || undefined }),
+        const result = await runApiAction(
+            () =>
+                adminCreateAquarium({
+                    name: aquariumName.trim(),
+                    id: customAquariumId.trim() || undefined,
+                    ownerId: ownerId || undefined,
+                }),
             "Aquarium created.",
         );
-        if (result) onCreated(result.id);
+        if (result) onAquariumCreated(result.id);
     };
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+        <form onSubmit={handleCreateAquarium} className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
             <div className="text-xs font-semibold text-slate-600">New aquarium</div>
             <StatusMessages status={status} />
             <input
                 required
                 maxLength={80}
-                value={name}
-                onChange={event => setName(event.target.value)}
+                value={aquariumName}
+                onChange={event => setAquariumName(event.target.value)}
                 placeholder="Aquarium name"
-                className={inputClass}
+                className={INPUT_CLASS_NAME}
                 aria-label="Aquarium name"
             />
             <input
-                value={id}
-                onChange={event => setId(event.target.value)}
+                value={customAquariumId}
+                onChange={event => setCustomAquariumId(event.target.value)}
                 placeholder="Aquarium ID (optional)"
                 pattern="[A-Za-z0-9_\-]{1,64}"
                 title="Letters, numbers, - and _ (up to 64 characters)"
-                className={inputClass}
+                className={INPUT_CLASS_NAME}
                 aria-label="Aquarium ID"
             />
             <select
                 value={ownerId}
                 onChange={event => setOwnerId(event.target.value)}
-                className={inputClass}
+                className={INPUT_CLASS_NAME}
                 aria-label="Owner"
             >
                 <option value="">No owner yet (assign later)</option>
-                {users.map(user => (
+                {ownerCandidates.map(user => (
                     <option key={user.userId} value={user.userId}>
                         {user.fullName || user.email} · {user.email}
                     </option>
@@ -65,7 +72,7 @@ export default function NewAquariumForm({ onCreated, onCancel }) {
                 Use the same ID as AQUARIUM_ID in the device firmware if the ESP32 is already installed.
             </p>
             <div className="flex gap-2">
-                <SmallButton type="submit" tone="primary" disabled={busy}>
+                <SmallButton type="submit" tone="primary" disabled={isBusy}>
                     Create
                 </SmallButton>
                 {onCancel && <SmallButton onClick={onCancel}>Cancel</SmallButton>}

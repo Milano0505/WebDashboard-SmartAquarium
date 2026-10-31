@@ -1,8 +1,4 @@
-// Notifikasi disimpan di tabel notifications; status baca dan hapus per user di notification_states.
-// Semua fungsi menerima `client` (koneksi transaksi atau { query }) agar ikut transaksi pemanggil
-
-// Notifikasi bersama: terlihat semua anggota akuarium. dedupeKey (opsional) mencegah ganda untuk laporan yang
-// dikirim ulang oleh perangkat
+// notifikasi akuarium
 export async function addAquariumNotification(
     client,
     { aquariumId, actorId = null, actorName, title, message, type = "info", dedupeKey = null },
@@ -15,7 +11,7 @@ export async function addAquariumNotification(
     );
 }
 
-// Notifikasi privat: hanya untuk satu user (perubahan profil atau password), tampil di semua akuarium miliknya
+// notifikasi user
 export async function addUserNotification(client, userId, title, message) {
     await client.query(
         `insert into notifications (scope, recipient_id, actor_id, title, message, type)
@@ -24,7 +20,7 @@ export async function addUserNotification(client, userId, title, message) {
     );
 }
 
-// Syarat sebuah notifikasi terlihat oleh user pada akuarium tertentu: $1 = akuarium, $2 = user
-export const VISIBLE_NOTIFICATION = `
+// notifikasi terlihat
+export const VISIBLE_NOTIFICATION_CONDITION = `
     ((n.scope = 'aquarium' and n.aquarium_id = $1) or (n.scope = 'user' and n.recipient_id = $2))
     and s.dismissed_at is null`;
